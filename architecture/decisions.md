@@ -2,6 +2,9 @@
 
 What was decided and why. Newest first. `/save` appends here; `/resume` reads it.
 
+## 2026-09-28 — Slice 1 code is stdlib Python driving the ffmpeg/ffprobe CLIs; loudness is two-pass
+No Node, no pip dependencies: the guide's monorepo (pnpm, Electron, SolidJS) only earns its keep once the canvas exists (slice 2). Python matches the guide's orchestrator language, so Tier 1 can call the renderer in-process. Loudness uses two-pass loudnorm (measure the mix, then linear gain) because single-pass dynamic mode misses the −14 LUFS target on short clips. Every clip is forced to an exact frame count (tpad clone + trim) so xfade offsets and the QC frame count are exact.
+
 ## 2026-09-28 — QC loudness target −14 LUFS; captions deferred to slice 2
 −14 LUFS integrated is the render's loudness target. Captions stay out of slice 1: Piper emits no word timestamps, so they need a forced aligner first, and adding one now would widen slice 1 past its first published video.
 

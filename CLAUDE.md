@@ -37,7 +37,11 @@ MontageStudio/
 ├── pipeline/           ← Stage-by-stage data flow, CLI commands, external APIs
 ├── data/               ← scene_plan / manifest / captions schemas
 ├── features/           ← Capability inventory and MVP cut
-└── logs/               ← Session logs, written by /save
+├── logs/               ← Session logs, written by /save
+│
+├── src/montage/        ← Slice 1 code: plan validator, FFmpeg renderer, QC, CLI (stdlib only)
+├── tests/              ← pytest; render tests need ffmpeg + ffprobe on PATH
+└── pyproject.toml      ← `pip install -e .` gives the `montage` command; pytest config
 ```
 
 ## Rules & Conventions
@@ -56,6 +60,6 @@ See [[logs/index]]
 ## Current Status
 
 > **Last updated:** 2026-09-28
-> **Status:** Spec only. No code, no users. Structure upgraded from the technical guide.
+> **Status:** Slice 1 validator + FFmpeg renderer + QC built and tested (39 tests). No planning stage or Piper yet — plans are hand-written. No published video yet.
 
 <!-- TODO: Update this as the project progresses -->

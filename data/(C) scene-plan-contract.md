@@ -73,10 +73,10 @@ The video track is one continuous single-layer sequence:
 
 The guide's crossfade example obeys this (210 − 15 = 195). Its full example fails the end rule — the video track ends at 450 while `meta.durationFrames` is 2700 — which is fine for an excerpt but a real plan would be rejected.
 
-### FFmpeg mapping (`inferred` — how the renderer realises each field)
+### FFmpeg mapping (as built in `src/montage/render.py`, 2026-09-28)
 | Field | FFmpeg |
 |---|---|
-| `sourceInFrame`, `durationFrames` | `trim=start_frame:end_frame` / `atrim` + `setpts` / `asetpts`; stills via `-loop 1` + `trim` |
+| `sourceInFrame`, `durationFrames` | input `-ss` for the in-point, then `fps`, `tpad` clone, `trim=end_frame` so every clip is exactly `durationFrames`; audio `apad` + `atrim=end_sample`; stills via `-loop 1` |
 | `resolution`, `fit` | `scale=...:force_original_aspect_ratio=increase,crop` (cover) or `=decrease,pad` (contain); `setsar=1`, `fps`, `format=yuv420p` on every clip so `xfade` inputs match |
 | `motion` | `zoompan` with `z` as an expression over the clip's frame index; `easeInOutCubic` written out as a piecewise expression. Stills first upscaled ~4× to avoid zoompan jitter. |
 | `transition` | `xfade=transition=fade:duration=d/fps:offset=next.startFrame/fps`; hard cuts via `concat` |
