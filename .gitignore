@@ -1,0 +1,4 @@
+# Local environment and downloaded models: machine-specific, large, regenerable.
+.venv/
+voices/
+*.egg-info/

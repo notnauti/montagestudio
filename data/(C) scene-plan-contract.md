@@ -106,4 +106,4 @@ Caption / text tracks, more than one video track (no overlays or picture-in-pict
 
 ### Settled 2026-09-28
 - Loudness target: −14 LUFS integrated.
-- Captions: slice 2. Piper gives no word timestamps, so slice 2 needs a forced aligner (or a TTS with timestamps) before a caption track exists.
+- Captions: slice 2. Correction (2026-09-28, after installing it): piper-tts 1.8 can return phoneme alignments (`PiperVoice.load(..., include_alignments=True)`, `synthesize_wav(..., include_alignments=True)`), so slice 2 may not need a separate forced aligner — check whether lessac-medium supports them before choosing.
