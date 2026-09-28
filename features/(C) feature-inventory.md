@@ -10,7 +10,7 @@ Source: [[00 Specifications/montagestudio_architecture_technical_guide]]. Status
 | Assets | Generative fallback (Runway, LTX-Video, Flux, Recraft, SDXL) | 1 | later |
 | Gate | Contact-sheet approval (terminal / web) | 1 | later |
 | Bridge | FFmpeg normalization (sample rate, aspect, pixel format) | 2 | later |
-| Bridge | Captions → subtitle markers | 2 | later |
+| Bridge | Captions → subtitle markers | 2 | **Slice 2** — needs word timestamps (forced aligner) |
 | Bridge | scene_plan → `project.ts` compiler + validator | 2 | **Slice 2** — with the canvas |
 | Studio | SolidJS canvas, timeline, inspector, bezier editor (Electron/web) | 3 | later |
 | Studio | Bidirectional canvas ⇄ code sync | 3 | later |
