@@ -2,17 +2,15 @@
 
 Agentic video pipeline. Tier 1 (macro-production, adapted from OpenMontage) turns a brief into script, narration, sourced/generated assets and a scene plan, gated by a contact-sheet approval. Tier 2 (`@montagestudio/bridge`) compiles `scene_plan.json` into a Diffusion Studio `project.ts`. Tier 3 is the interactive SolidJS timeline plus an MCP server so coding agents can edit the cut. Export engine renders and QCs. Full spec: [[00 Specifications/montagestudio_architecture_technical_guide]].
 
-<!-- TODO: who is it for? The spec names "developers and creative directors" — pick one identifiable user. -->
+**User:** n@uti — built as my own production studio. Runs alongside Agent Harness OS, not in place of it; it does not count toward the vault's 60-day $5k / 100-user target.
 
 ## Claude's Role
 
 Build partner and scope cop. Turn the spec into the smallest end-to-end slice a real user can run, keep the scene-plan contract honest across tiers, and push back when work drifts into tiers no user has asked for.
 
-**Done means:** <!-- TODO: a condition that can be checked. Candidate tied to the vault goal: "5 external users each produce a video they publish, via the thinnest brief → scene_plan → render path." -->
+**Done means:** Functioning Production Studio — checked by: from one brief, n@uti gets a rendered video they would publish (plan → assets → gate → scene_plan → studio refine → render) without hand-editing generated code.
 
-Until that line is filled in, the prime directive is the filling in of it. The spec describes three tiers, an Electron app, a Python orchestrator, CLIP scraping, generative providers and an MCP server — building any of it before "done" is written is building against nothing.
-
-If a session starts building before that line exists, nudge: *"What would make this done, and how would we know?"*
+Because this runs alongside the primary target, it gets the leftover time, not the best time. If a MontageStudio session starts while Agent Harness OS has an open next step toward users, nudge: *"Is the harness moving this week?"*
 If a session is polishing a tier no user has touched, nudge: *"Who ran the last thing we shipped?"*
 
 ## Process
