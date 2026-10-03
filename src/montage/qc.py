@@ -1,4 +1,8 @@
-"""Post-render QC: exact frame count, format, and EBU R128 loudness."""
+"""Post-render QC: exact frame count, size, fps, codec, pixel format, and EBU R128 loudness.
+
+Expectations come from the OutputSpec the file was rendered with (profile size / fps / codec);
+without one, from the plan itself (the slice 1 H.264 output).
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,8 @@ from pathlib import Path
 
 from .plan import Plan
 from .probe import tool
-from .render import TARGET_LUFS
+from .profiles import OutputSpec, resolve
+from .render import TARGET_LUFS, out_frames
 
 LUFS_TOLERANCE = 1.0  # ±1 LU, the usual R128 delivery tolerance
 MAX_TRUE_PEAK = -1.0  # dBTP; loudnorm aims for -1.5, AAC encoding can add a little
@@ -27,7 +32,7 @@ class Check:
 def _streams(path: Path) -> list[dict]:
     result = subprocess.run(
         [tool("ffprobe"), "-v", "error", "-count_packets",
-         "-show_entries", "stream=codec_type,width,height,avg_frame_rate,nb_read_packets",
+         "-show_entries", "stream=codec_type,codec_name,pix_fmt,width,height,avg_frame_rate,nb_read_packets",
          "-of", "json", str(path)],
         capture_output=True, text=True,
     )
@@ -49,9 +54,11 @@ def _loudness(path: Path) -> tuple[float | None, float | None]:
     return as_float(i), as_float(peak)
 
 
-def run_qc(path: str | Path, plan: Plan) -> list[Check]:
+def run_qc(path: str | Path, plan: Plan, spec: OutputSpec | None = None) -> list[Check]:
     path = Path(path)
-    meta = plan.meta
+    spec = spec or resolve(plan)
+    expect_frames = out_frames(plan.meta.duration_frames, plan, spec)
+    want = f"{spec.profile} expects" if spec.profile != "native" else "plan says"
     streams = _streams(path)
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
@@ -60,17 +67,21 @@ def run_qc(path: str | Path, plan: Plan) -> list[Check]:
     if video is None:
         return [Check("video stream", False, "no video stream in output")]
     frames = int(video.get("nb_read_packets", -1))
-    checks.append(Check("frame count", frames == meta.duration_frames,
-                        f"{frames} frames, plan says {meta.duration_frames}"))
+    checks.append(Check("frame count", frames == expect_frames, f"{frames} frames, {want} {expect_frames}"))
     size = (video.get("width"), video.get("height"))
-    checks.append(Check("resolution", size == (meta.width, meta.height),
-                        f"{size[0]}x{size[1]}, plan says {meta.width}x{meta.height}"))
+    checks.append(Check("resolution", size == (spec.width, spec.height),
+                        f"{size[0]}x{size[1]}, {want} {spec.width}x{spec.height}"))
     fps = Fraction(video.get("avg_frame_rate", "0/1"))
-    checks.append(Check("fps", fps == meta.fps, f"{float(fps):g}, plan says {meta.fps}"))
+    checks.append(Check("fps", fps == spec.fps, f"{float(fps):g}, {want} {spec.fps}"))
+    vcodec, pix = video.get("codec_name"), video.get("pix_fmt")
+    checks.append(Check("video codec", vcodec == spec.codec and pix == spec.pix_fmt,
+                        f"{vcodec} {pix} (encoder {spec.encoder}), {want} {spec.codec} {spec.pix_fmt}"))
 
     if audio is None:
         checks.append(Check("audio stream", False, "no audio stream in output"))
         return checks
+    acodec = audio.get("codec_name")
+    checks.append(Check("audio codec", acodec == spec.audio_codec, f"{acodec}, {want} {spec.audio_codec}"))
     integrated, true_peak = _loudness(path)
     checks.append(Check(
         "loudness", integrated is not None and abs(integrated - TARGET_LUFS) <= LUFS_TOLERANCE,

@@ -14,6 +14,7 @@ import urllib.request
 from dataclasses import dataclass
 
 from .brief import Brief
+from .pipeline import Pipeline, load_pipeline
 
 CLAUDE_MODEL = "claude-opus-5"
 OLLAMA_MODEL = os.environ.get("MONTAGE_OLLAMA_MODEL", "qwen2.5:7b")
@@ -50,7 +51,7 @@ class Script:
 
 # ── prompt ────────────────────────────────────────────────────────────────────
 
-SYSTEM = """You write narration scripts for short explainer videos. The narration is read aloud by a \
+SYSTEM_TEMPLATE = """You write narration scripts for short {kind} videos. The narration is read aloud by a \
 text-to-speech voice over the visuals you choose, so write for the ear: plain spoken sentences, no \
 headings, markdown, stage directions, emoji or bracketed notes. Spell out anything a voice would \
 stumble on (symbols, abbreviations nobody says aloud).
@@ -60,6 +61,16 @@ visual from the asset list only, by matching what is being said to the asset's d
 asset when nothing else fits. For still images choose a slow zoom_in or zoom_out to keep the frame \
 alive; for videos choose none. A video asset can only cover as much narration as its length allows, \
 so keep beats over video assets within their word limit."""
+
+SYSTEM = SYSTEM_TEMPLATE.format(kind="explainer")  # the explainer prompt, unchanged from slice 1
+
+
+def system_prompt(pipeline: Pipeline) -> str:
+    return SYSTEM_TEMPLATE.format(kind=pipeline.name)
+
+
+def _pipeline(brief: Brief, pipeline: Pipeline | None) -> Pipeline:
+    return pipeline or load_pipeline(brief.recipe)
 
 
 def _asset_lines(brief: Brief) -> str:
@@ -73,10 +84,17 @@ def _asset_lines(brief: Brief) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(brief: Brief) -> str:
+def build_prompt(brief: Brief, pipeline: Pipeline | None = None) -> str:
+    p = _pipeline(brief, pipeline)
     words = int(brief.target_seconds * WORDS_PER_SECOND)
+    fewest, most = p.beat_range(brief.target_seconds)
+    lo_s, hi_s = p.beat_seconds
     return (f"Title: {brief.title}\n\nBrief:\n{brief.text}\n\n"
-            f"Target length: about {brief.target_seconds} seconds of narration, roughly {words} words in total.\n\n"
+            f"Format: {p.name} — {p.description}\n"
+            f"Tone and pacing: {p.tone}\n\n"
+            f"Target length: about {brief.target_seconds} seconds of narration, roughly {words} words in total.\n"
+            f"Beats: write {fewest} to {most} beats, each {lo_s:g} to {hi_s:g} seconds "
+            f"({int(lo_s * WORDS_PER_SECOND)} to {int(hi_s * WORDS_PER_SECOND)} words) of narration.\n\n"
             f"Assets:\n{_asset_lines(brief)}")
 
 
@@ -137,7 +155,8 @@ def parse_script(raw: object, brief: Brief, writer: str) -> Script:
 
 # ── writers ───────────────────────────────────────────────────────────────────
 
-def write_with_claude(brief: Brief) -> Script:
+def write_with_claude(brief: Brief, pipeline: Pipeline | None = None) -> Script:
+    p = _pipeline(brief, pipeline)
     try:
         import anthropic
     except ImportError as exc:
@@ -151,8 +170,8 @@ def write_with_claude(brief: Brief) -> Script:
             fallbacks="default",  # a safety decline is retried server-side on Anthropic's recommended model
             thinking={"type": "adaptive"},
             output_config={"format": {"type": "json_schema", "schema": script_schema(brief)}},
-            system=SYSTEM,
-            messages=[{"role": "user", "content": build_prompt(brief)}],
+            system=system_prompt(p),
+            messages=[{"role": "user", "content": build_prompt(brief, p)}],
         )
     except anthropic.AuthenticationError as exc:
         raise WriterUnavailable(f"Claude credentials rejected: {exc.message}") from exc
@@ -176,13 +195,14 @@ def write_with_claude(brief: Brief) -> Script:
     return parse_script(json.loads(text), brief, writer=response.model)
 
 
-def write_with_ollama(brief: Brief) -> Script:
+def write_with_ollama(brief: Brief, pipeline: Pipeline | None = None) -> Script:
+    p = _pipeline(brief, pipeline)
     body = json.dumps({
         "model": OLLAMA_MODEL,
         "stream": False,
         "format": script_schema(brief),
-        "messages": [{"role": "system", "content": SYSTEM},
-                     {"role": "user", "content": build_prompt(brief)}],
+        "messages": [{"role": "system", "content": system_prompt(p)},
+                     {"role": "user", "content": build_prompt(brief, p)}],
         "options": {"temperature": 0.7, "num_ctx": 8192},
     }).encode()
     req = urllib.request.Request(f"{OLLAMA_HOST}/api/chat", data=body, headers={"Content-Type": "application/json"})

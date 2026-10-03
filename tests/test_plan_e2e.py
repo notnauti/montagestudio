@@ -63,12 +63,23 @@ def test_plan_then_render(workspace, capsys):
     assert main(["plan", str(workspace / "brief.json")]) == 0
     out = capsys.readouterr().out
     assert "reused script.json" in out and "3 beats" in out
+    assert (workspace / "contact_sheet.png").is_file() and "contact sheet:" in out  # the gate's storyboard
     wavs = sorted((workspace / "assets" / "narration").glob("beat_*.wav"))
     assert len(wavs) == 3
 
     plan = load_plan(workspace / "scene_plan.json")
     assert [c.src.name for c in plan.audio[0].clips] == [w.name for w in wavs]
     assert plan.video.clips[1].motion is not None
+
+    # Word timings come from Piper's own phoneme durations, not an estimate, and land on the timeline
+    caps = json.loads((workspace / "captions.json").read_text(encoding="utf-8"))
+    assert [b["method"] for b in caps["beats"]] == ["piper-alignment"] * 3
+    script = json.loads((workspace / "script.json").read_text())
+    assert [" ".join(w.text for w in c.words) for c in plan.captions.clips] == \
+        [b["narration"] for b in script["beats"]]
+    for clip, voice in zip(plan.captions.clips, plan.audio[0].clips):
+        assert clip.start_frame == voice.start_frame
+        assert clip.words[0].start_frame - voice.start_frame < 6  # Piper's lead-in silence is short
 
     # Re-planning with an unchanged script re-uses every wav (no re-synthesis).
     mtimes = [w.stat().st_mtime_ns for w in wavs]

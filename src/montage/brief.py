@@ -4,11 +4,15 @@
   "title": "How GPS corrects for relativity",
   "brief": "One paragraph: what the video says and for whom.",
   "targetSeconds": 60,
-  "recipe": "explainer",
+  "recipe": "explainer",          # optional; a pipeline name from <project>/pipelines/*.json
   "assets": [
     {"src": "./assets/orbit.mp4", "description": "satellite orbiting Earth, slow pan"},
-    {"src": "./assets/clock.png", "description": "diagram of two clocks drifting apart"}
+    {"src": "./assets/clock.png", "description": "diagram of two clocks drifting apart",
+     "query": "atomic clock"}     # optional; search words for `montage scrape` (default: description)
   ],
+
+An asset whose file does not exist yet is "wanted": `montage scrape <workspace>` fetches it
+(scrape.py). Planning needs every file present.
   "music": {"src": "./assets/bed.wav", "volume": 0.12},   # optional
   "voice": "en_US-lessac-medium"                           # optional
 }
@@ -22,10 +26,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import pipeline as pipeline_mod
+from .pipeline import DEFAULT_PIPELINE
 from .plan import STILL_EXTS
 from .probe import MediaInfo, ProbeError, probe as default_probe
 
-RECIPES = {"explainer"}
 DEFAULT_VOICE = "en_US-lessac-medium"
 
 
@@ -77,7 +82,9 @@ def _media(src: object, where: str, workspace: Path, errs: list[str], probe) -> 
         errs.append(f"{where}.src: must be inside assets/, got {src!r}")
         return None
     if not p.is_file():
-        errs.append(f"{where}.src: file not found: {src!r}")
+        hint = (f" (run `montage scrape \"{workspace}\"` to source it from Commons / NASA / Archive.org, "
+                f"or put the file there)") if where.startswith("brief.assets") else ""
+        errs.append(f"{where}.src: file not found: {src!r}{hint}")
         return None
     try:
         return p, probe(p)
@@ -107,9 +114,10 @@ def parse_brief(raw: object, workspace: str | Path, probe=default_probe) -> Brie
     target = raw.get("targetSeconds")
     if "targetSeconds" in raw and not (isinstance(target, int) and not isinstance(target, bool) and 10 <= target <= 600):
         errs.append(f"brief.targetSeconds: must be an integer 10-600, got {target!r}")
-    recipe = raw.get("recipe", "explainer")
-    if recipe not in RECIPES:
-        errs.append(f"brief.recipe: only {sorted(RECIPES)} in slice 1, got {recipe!r}")
+    recipe = raw.get("recipe", DEFAULT_PIPELINE)
+    known = pipeline_mod.available()
+    if recipe not in known:
+        errs.append(f"brief.recipe: unknown pipeline {recipe!r}; available: {known}")
     voice = raw.get("voice", DEFAULT_VOICE)
     if not isinstance(voice, str) or not voice:
         errs.append("brief.voice: must be a Piper voice name")
@@ -126,8 +134,10 @@ def parse_brief(raw: object, workspace: str | Path, probe=default_probe) -> Brie
             errs.append(f"{where}: must be an object")
             continue
         for k in a:
-            if k not in ("src", "description"):
+            if k not in ("src", "description", "query"):
                 errs.append(f"{where}: unsupported field '{k}'")
+        if "query" in a and (not isinstance(a["query"], str) or not a["query"].strip()):
+            errs.append(f"{where}.query: must be a non-empty string (search words for `montage scrape`)")
         desc = a.get("description")
         if not isinstance(desc, str) or not desc.strip():
             errs.append(f"{where}.description: must be a non-empty string (the script writer picks visuals by it)")

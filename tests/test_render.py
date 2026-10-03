@@ -96,12 +96,28 @@ def test_single_clip_plan(workspace):
     assert_qc_passes(render(plan), plan)
 
 
+def test_full_range_jpeg_renders_as_limited_range(workspace):
+    # JPEGs decode full range (yuvj*); without a range conversion the output was tagged yuvj420p and
+    # failed the codec / pixel-format QC check (found on a still sourced from Commons)
+    _ffmpeg("-f", "lavfi", "-i", "testsrc2=size=400x300", "-frames:v", "1", str(workspace / "assets" / "photo.jpg"))
+    path = write_plan(workspace, [
+        {"id": "a", "src": "./assets/photo.jpg", "startFrame": 0, "durationFrames": 150}], [VOICE])
+    plan = load_plan(path)
+    assert_qc_passes(render(plan, workspace / "jpeg.mp4"), plan)
+
+
 def test_cli_exit_codes(workspace, capsys):
     good = write_plan(workspace, [
         {"id": "a", "src": "./assets/clip.mp4", "startFrame": 0, "durationFrames": 150}], [VOICE])
     assert main(["validate", str(good)]) == 0
+    # the storyboard gate: no render before contact sheet + approval
+    assert main(["render", str(good), "-o", str(workspace / "cli.mp4")]) == 1
+    assert "refusing to render" in capsys.readouterr().err
+    assert main(["contact-sheet", str(workspace)]) == 0
+    assert main(["approve", "--workspace", str(workspace)]) == 0
     assert main(["render", str(good), "-o", str(workspace / "cli.mp4")]) == 0
-    assert "PASS  frame count" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "approval: ok" in out and "PASS  frame count" in out
 
     bad = json.loads(good.read_text())
     bad["tracks"][0]["clips"][0]["durationFrames"] = 140

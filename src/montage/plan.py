@@ -22,6 +22,10 @@ MAX_SCALE = 10.0  # zoompan's ceiling
 CLIP_FIELDS = {"id", "src", "startFrame", "durationFrames", "sourceInFrame"}
 AUDIO_FIELDS = CLIP_FIELDS | {"volume"}
 VIDEO_FIELDS = CLIP_FIELDS | {"fit", "transition", "motion"}
+CAPTION_FIELDS = {"id", "startFrame", "durationFrames", "words"}
+WORD_FIELDS = {"text", "startFrame", "endFrame"}
+CAPTION_STYLES = {"highlight", "pop"}
+TRACK_TYPES = ("video", "audio", "caption")
 
 
 class PlanError(ValueError):
@@ -72,11 +76,38 @@ class Track:
 
 
 @dataclass(frozen=True)
+class CaptionWord:
+    text: str
+    start_frame: int  # timeline frames, like every startFrame in the plan
+    end_frame: int    # exclusive
+
+
+@dataclass(frozen=True)
+class CaptionClip:
+    id: str
+    start_frame: int
+    duration_frames: int
+    words: tuple[CaptionWord, ...]
+
+    @property
+    def end_frame(self) -> int:
+        return self.start_frame + self.duration_frames
+
+
+@dataclass(frozen=True)
+class CaptionTrack:
+    id: str
+    style: str
+    clips: tuple[CaptionClip, ...]
+
+
+@dataclass(frozen=True)
 class Plan:
     meta: Meta
     video: Track
     audio: tuple[Track, ...]
     workspace: Path
+    captions: CaptionTrack | None = None
 
 
 Prober = Callable[[Path], probe_mod.MediaInfo]
@@ -226,6 +257,82 @@ def _parse_clip(raw: Any, track_type: str, where: str, meta: Meta | None,
     return Clip(cid, src_path, start, dur, src_in, float(volume), fit, crossfade, motion, is_still)
 
 
+def _parse_caption_clip(raw: Any, where: str, meta: Meta | None, errs: list[str]) -> CaptionClip | None:
+    if not isinstance(raw, dict):
+        errs.append(f"{where}: must be an object")
+        return None
+    before = len(errs)
+    _fields(raw, CAPTION_FIELDS, CAPTION_FIELDS, where, errs)
+    cid = raw.get("id")
+    if "id" in raw and (not isinstance(cid, str) or not cid):
+        errs.append(f"{where}.id: must be a non-empty string")
+    start = _int_field(raw, "startFrame", where, errs, minimum=0)
+    dur = _int_field(raw, "durationFrames", where, errs, minimum=1)
+    end = start + dur if start is not None and dur is not None else None
+    if end is not None and meta and end > meta.duration_frames:
+        errs.append(f"{where}: ends at frame {end}, past meta.durationFrames {meta.duration_frames}")
+
+    words: list[CaptionWord] = []
+    wraw = raw.get("words")
+    if "words" in raw and not (isinstance(wraw, list) and wraw):
+        errs.append(f"{where}.words: must be a non-empty array")
+        wraw = []
+    prev_end = None
+    for wi, w in enumerate(wraw or []):
+        ww = f"{where}.words[{wi}]"
+        if not isinstance(w, dict):
+            errs.append(f"{ww}: must be an object")
+            continue
+        wb = len(errs)
+        _fields(w, WORD_FIELDS, WORD_FIELDS, ww, errs)
+        text = w.get("text")
+        if "text" in w and (not isinstance(text, str) or not text.strip()
+                            or any(ord(ch) < 32 for ch in text)):
+            errs.append(f"{ww}.text: must be a non-empty single-line string, got {text!r}")
+        ws = _int_field(w, "startFrame", ww, errs, minimum=0)
+        we = _int_field(w, "endFrame", ww, errs, minimum=1)
+        if len(errs) > wb:
+            continue
+        if ws >= we:
+            errs.append(f"{ww}: endFrame {we} must be after startFrame {ws}")
+        if start is not None and end is not None and not (start <= ws and we <= end):
+            errs.append(f"{ww}: frames {ws}-{we} fall outside the clip ({start}-{end})")
+        if prev_end is not None and ws < prev_end:
+            errs.append(f"{ww}: starts at {ws}, before the previous word ends ({prev_end}); "
+                        f"words must be in order and must not overlap")
+        prev_end = we
+        words.append(CaptionWord(text.strip(), ws, we))
+    if len(errs) > before:
+        return None
+    return CaptionClip(cid, start, dur, tuple(words))
+
+
+def _parse_caption_track(traw: dict, tw: str, meta: Meta | None, clip_ids: dict[str, str],
+                         errs: list[str]) -> CaptionTrack | None:
+    style = traw.get("style", "highlight")
+    before = len(errs)
+    if style not in CAPTION_STYLES:
+        errs.append(f"{tw}.style: must be one of {sorted(CAPTION_STYLES)}, got {style!r}")
+    clips: list[CaptionClip] = []
+    for ci, c in enumerate(traw["clips"]):
+        cw = f"{tw}.clips[{ci}]"
+        clip = _parse_caption_clip(c, cw, meta, errs)
+        if clip is None:
+            continue
+        if clip.id in clip_ids:
+            errs.append(f"{cw}.id: duplicate clip id '{clip.id}' (also {clip_ids[clip.id]})")
+        else:
+            clip_ids[clip.id] = cw
+        clips.append(clip)
+    for prev, cur in zip(clips, clips[1:]):
+        if cur.start_frame < prev.end_frame:
+            errs.append(f"{tw}: '{cur.id}' starts at {cur.start_frame}, before '{prev.id}' ends "
+                        f"({prev.end_frame}); caption clips must be sorted and must not overlap")
+    if len(errs) > before:
+        return None
+    return CaptionTrack(traw["id"], style, tuple(clips))
+
+
 def _check_track_timing(track: Track, where: str, meta: Meta | None, errs: list[str]) -> None:
     clips = track.clips
     for i in range(1, len(clips)):
@@ -302,14 +409,17 @@ def parse_plan(raw: Any, workspace: str | Path, probe: Prober = probe_mod.probe)
         errs.append("tracks: must be a non-empty array")
         tracks_raw = []
     track_ids: set[str] = set()
+    captions: CaptionTrack | None = None
     for ti, traw in enumerate(tracks_raw or []):
         tw = f"tracks[{ti}]"
         if not isinstance(traw, dict):
             errs.append(f"{tw}: must be an object")
             continue
         before = len(errs)
-        _fields(traw, {"id", "type", "clips"}, {"id", "type", "clips"}, tw, errs)
-        tid, ttype, craw = traw.get("id"), traw.get("type"), traw.get("clips")
+        ttype = traw.get("type")
+        allowed = {"id", "type", "clips", "style"} if ttype == "caption" else {"id", "type", "clips"}
+        _fields(traw, allowed, {"id", "type", "clips"}, tw, errs)
+        tid, craw = traw.get("id"), traw.get("clips")
         if "id" in traw:
             if not isinstance(tid, str) or not tid:
                 errs.append(f"{tw}.id: must be a non-empty string")
@@ -317,13 +427,19 @@ def parse_plan(raw: Any, workspace: str | Path, probe: Prober = probe_mod.probe)
                 errs.append(f"{tw}.id: duplicate track id '{tid}'")
             else:
                 track_ids.add(tid)
-        if "type" in traw and ttype not in ("video", "audio"):
-            errs.append(f"{tw}.type: must be 'video' or 'audio', got {ttype!r}")
+        if "type" in traw and ttype not in TRACK_TYPES:
+            errs.append(f"{tw}.type: must be one of {list(TRACK_TYPES)}, got {ttype!r}")
             continue
         if "clips" in traw and not (isinstance(craw, list) and craw):
             errs.append(f"{tw}.clips: must be a non-empty array")
             continue
         if len(errs) > before:
+            continue
+        if ttype == "caption":
+            if any(isinstance(t, dict) and t.get("type") == "caption" for t in tracks_raw[:ti]):
+                errs.append(f"{tw}: at most one caption track")
+                continue
+            captions = _parse_caption_track(traw, tw, meta, clip_ids, errs)
             continue
 
         clips: list[Clip] = []
@@ -361,4 +477,4 @@ def parse_plan(raw: Any, workspace: str | Path, probe: Prober = probe_mod.probe)
         raise PlanError(errs)
     video = next(t for _, t in tracks if t.type == "video")
     audio = tuple(t for _, t in tracks if t.type == "audio")
-    return Plan(meta, video, audio, workspace)
+    return Plan(meta, video, audio, workspace, captions)

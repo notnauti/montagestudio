@@ -1,0 +1,10 @@
+{
+  "name": "documentary",
+  "description": "Archival documentary: a story told in sequence, with room to breathe between lines.",
+  "defaultTargetSeconds": 90,
+  "beatSeconds": [7, 12],
+  "tone": "Measured and factual, past tense, a narrator telling a true story in order. Open on a concrete scene, name people, places and dates, let each beat land before the next. No hype, no rhetorical questions, no calls to action.",
+  "briefTemplate": "A short documentary about {topic}: the setting, the people involved, what happened in order, and why it still matters.",
+  "timing": {"crossfade": 18, "lead": 18, "tail": 15, "endHold": 60, "zoom": 1.04, "easing": "easeInOutCubic"},
+  "captionStyle": "highlight"
+}

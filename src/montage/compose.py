@@ -1,40 +1,30 @@
 """Brief + script + narration -> scene_plan.json (the slice 1 contract).
 
-Timeline, per beat i (explainer recipe, in frames):
+Timeline, per beat i (in frames; LEAD / TAIL / END_HOLD / CROSSFADE come from the pipeline recipe):
   beat_i  = LEAD + narration_i + TAIL          (last beat holds END_HOLD instead of TAIL)
   T_i     = sum of earlier beats                (where beat i starts)
   voice   : starts at T_i + LEAD, lasts narration_i
   visual  : starts at T_i, lasts beat_i + CROSSFADE (last: beat_i), crossfades into the next
 Every crossfade therefore sits inside the next beat's LEAD, before its narration begins, and
 next.start == prev.end - CROSSFADE holds by construction.
+
+Captions: each beat's narration word timings become one caption clip on a `caption` track
+(captions.py), styled by the recipe's caption_style; "none" or no word timings = no track.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
 from pathlib import Path
 
+from . import captions as captions_mod
 from .brief import Brief
 from .narrate import Narration
+from .pipeline import Recipe
 from .script import Script
 
-
-@dataclass(frozen=True)
-class Recipe:
-    width: int = 1920
-    height: int = 1080
-    fps: int = 30
-    crossfade: int = 12   # 0.4 s
-    lead: int = 12        # silence before each beat's narration; holds the crossfade
-    tail: int = 9         # breath after each beat's narration
-    end_hold: int = 36    # last frame held after the final line
-    zoom: float = 1.06
-    easing: str = "easeInOutCubic"
-
-
-EXPLAINER = Recipe()
+EXPLAINER = Recipe()  # the explainer recipe's timing; pipelines/explainer.json carries the same numbers
 
 
 class ComposeError(ValueError):
@@ -93,6 +83,9 @@ def compose(brief: Brief, script: Script, narration: list[Narration], recipe: Re
         {"id": "visuals", "type": "video", "clips": video_clips},
         {"id": "narration", "type": "audio", "clips": voice_clips},
     ]
+    caption_track, _ = captions_mod.build(voice_clips, narration, fps, t, recipe.caption_style)
+    if caption_track:
+        tracks.append(caption_track)
     if brief.music_src:
         music_frames = min(t, math.floor((brief.music_duration or 0) * fps))
         if music_frames > 0:

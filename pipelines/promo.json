@@ -1,0 +1,10 @@
+{
+  "name": "promo",
+  "description": "Promo: fast cuts, short punchy lines, ends on one call to action.",
+  "defaultTargetSeconds": 30,
+  "beatSeconds": [2, 4],
+  "tone": "Energetic and direct, present tense, second person. One short sentence per beat. Hook in the first beat, one benefit per beat after it, and finish with a single clear call to action.",
+  "briefTemplate": "A promo for {topic}: who it is for, the problem it removes, and what to do next.",
+  "timing": {"crossfade": 6, "lead": 6, "tail": 4, "endHold": 30, "zoom": 1.1, "easing": "linear"},
+  "captionStyle": "pop"
+}

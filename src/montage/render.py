@@ -1,9 +1,21 @@
-"""Slice 1 renderer: validated Plan -> mp4, straight through FFmpeg.
+"""Renderer: validated Plan -> video file, straight through FFmpeg.
 
 Two passes. Pass 1 renders only the audio mix through `loudnorm` to measure it;
 pass 2 renders picture + mix with linear loudnorm to the target (-14 LUFS).
-Every clip is normalised to the plan's size, fps, SAR and pixel format and cut
+Every clip is conformed to the output size, fps, SAR and pixel format and cut
 to an exact frame count, so xfade offsets land on exact frames.
+
+Output size / fps / codec come from an OutputSpec (see profiles.py). Without a profile
+the spec is the plan's own grid in H.264, i.e. the slice 1 output. With a profile whose
+fps differs from meta.fps, every clip boundary is mapped onto the output grid
+(round(frame * out_fps / plan_fps)) and crossfades are re-derived from the mapped
+boundaries, so `next.start == prev.end - crossfade` still holds exactly.
+
+Before rendering, assets are normalized (normalize.py) into the workspace cache unless
+normalize=False; the render then reads the cached copies.
+
+A caption track is written as an ASS file (subtitles.py) under <workspace>/cache/captions/ and
+burned in with the `ass` filter as the last video step, unless captions=False (--no-captions).
 """
 
 from __future__ import annotations
@@ -11,16 +23,21 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
+from . import normalize as normalize_mod
+from . import subtitles as subtitles_mod
 from .plan import Clip, Plan
 from .probe import tool
+from .profiles import OutputSpec, resolve
 
 TARGET_LUFS = -14.0
 TARGET_TP = -1.5
 TARGET_LRA = 11.0
 SAMPLE_RATE = 48000
 SUPERSAMPLE = 4  # zoompan rounds x/y to whole pixels; zooming a 4x frame hides the jitter
+MAX_ZOOM_EDGE = 8192  # cap on the supersampled frame's long edge (4K output gets 2x, not 4x)
 
 
 class RenderError(RuntimeError):
@@ -35,8 +52,19 @@ def _slug(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "render"
 
 
-def default_output(plan: Plan) -> Path:
-    return plan.workspace / "renders" / f"{_slug(plan.meta.title)}.mp4"
+def default_output(plan: Plan, spec: OutputSpec | None = None) -> Path:
+    if spec is None or spec.profile == "native":
+        return plan.workspace / "renders" / f"{_slug(plan.meta.title)}.mp4"
+    return plan.workspace / "renders" / f"{_slug(plan.meta.title)}-{spec.profile}{spec.ext}"
+
+
+def out_frames(frames: int, plan: Plan, spec: OutputSpec) -> int:
+    """A plan frame number on the output grid."""
+    return round(Fraction(frames * spec.fps, plan.meta.fps))
+
+
+def _supersample(spec: OutputSpec) -> int:
+    return max(1, min(SUPERSAMPLE, MAX_ZOOM_EDGE // max(spec.width, spec.height)))
 
 
 # ── inputs ────────────────────────────────────────────────────────────────────
@@ -57,15 +85,15 @@ def _audio_input(clip: Clip, fps: int) -> list[str]:
 
 # ── video graph ───────────────────────────────────────────────────────────────
 
-def _ease(clip: Clip) -> str:
-    t = f"min(on/{max(clip.duration_frames - 1, 1)},1)"
-    if clip.motion.easing == "easeInOutCubic":
+def _ease(frames: int, easing: str) -> str:
+    t = f"min(on/{max(frames - 1, 1)},1)"
+    if easing == "easeInOutCubic":
         return f"if(lt({t},0.5),4*pow({t},3),1-pow(-2*{t}+2,3)/2)"
     return t
 
 
-def _video_chain(idx: int, clip: Clip, plan: Plan, label: str) -> str:
-    w, h, fps = plan.meta.width, plan.meta.height, plan.meta.fps
+def _video_chain(idx: int, clip: Clip, frames: int, spec: OutputSpec, label: str) -> str:
+    w, h, fps = spec.width, spec.height, spec.fps
     f = [f"[{idx}:v]setpts=PTS-STARTPTS", f"fps={fps}"]
     if clip.fit == "cover":
         f += [f"scale={w}:{h}:force_original_aspect_ratio=increase", f"crop={w}:{h}"]
@@ -74,32 +102,49 @@ def _video_chain(idx: int, clip: Clip, plan: Plan, label: str) -> str:
               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"]
     if clip.motion:
         m = clip.motion
-        z = f"{m.scale_from}+({m.scale_to - m.scale_from})*({_ease(clip)})"
-        f += [f"scale={w * SUPERSAMPLE}:{h * SUPERSAMPLE}:flags=lanczos",
+        ss = _supersample(spec)
+        z = f"{m.scale_from}+({m.scale_to - m.scale_from})*({_ease(frames, m.easing)})"
+        f += [f"scale={w * ss}:{h * ss}:flags=lanczos",
               f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={fps}"]
-    f += ["setsar=1", "format=yuv420p",
+    # out_range=tv: a full-range source (any JPEG, e.g. a sourced Commons still) otherwise keeps its
+    # range flag through format=, and the output is tagged yuvj420p instead of yuv420p
+    f += ["setsar=1", "scale=out_range=tv", f"format={spec.pix_fmt}",
           "tpad=stop_mode=clone:stop_duration=1",
-          f"trim=end_frame={clip.duration_frames}", "setpts=PTS-STARTPTS"]
+          f"trim=end_frame={frames}", "setpts=PTS-STARTPTS"]
     return ",".join(f) + f"[{label}]"
 
 
-def _video_graph(plan: Plan) -> list[str]:
-    fps = plan.meta.fps
+def _video_graph(plan: Plan, spec: OutputSpec, subtitles: Path | None = None) -> list[str]:
+    fps = spec.fps
     clips = plan.video.clips
-    parts = [_video_chain(i, c, plan, f"v{i}") for i, c in enumerate(clips)]
+    starts = [out_frames(c.start_frame, plan, spec) for c in clips]
+    ends = [out_frames(c.end_frame, plan, spec) for c in clips]
+    parts = [_video_chain(i, c, ends[i] - starts[i], spec, f"v{i}") for i, c in enumerate(clips)]
     acc = "v0"
     for i in range(1, len(clips)):
-        prev, cur = clips[i - 1], clips[i]
         out = f"x{i}"
-        if prev.crossfade_frames:
+        overlap = ends[i - 1] - starts[i]  # = the crossfade on the output grid; 0 for a hard cut
+        if clips[i - 1].crossfade_frames and overlap > 0:
             # offset is on the accumulated timeline, which starts at frame 0 = plan frame 0
-            parts.append(f"[{acc}][v{i}]xfade=transition=fade:duration={_secs(prev.crossfade_frames, fps)}"
-                         f":offset={_secs(cur.start_frame, fps)}[{out}]")
+            parts.append(f"[{acc}][v{i}]xfade=transition=fade:duration={_secs(overlap, fps)}"
+                         f":offset={_secs(starts[i], fps)}[{out}]")
         else:
             parts.append(f"[{acc}][v{i}]concat=n=2:v=1:a=0[{out}]")
         acc = out
-    parts.append(f"[{acc}]null[vout]")
+    if subtitles is not None:
+        parts.append(f"[{acc}]ass=filename={subtitles_mod.filter_path(subtitles)}[vout]")
+    else:
+        parts.append(f"[{acc}]null[vout]")
     return parts
+
+
+def write_subtitles(plan: Plan, spec: OutputSpec) -> Path | None:
+    """The plan's caption track as an ASS file on the output grid, or None when it has none."""
+    if plan.captions is None:
+        return None
+    path = plan.workspace / "cache" / "captions" / f"{_slug(plan.meta.title)}-{spec.profile}.ass"
+    return subtitles_mod.write_ass(plan.captions, path, spec.width, spec.height, spec.fps,
+                                   lambda f: out_frames(f, plan, spec))
 
 
 # ── audio graph ───────────────────────────────────────────────────────────────
@@ -153,17 +198,19 @@ def measure_command(plan: Plan) -> list[str]:
             "-filter_complex", ";".join(graph), "-map", "[aout]", "-f", "null", "-"]
 
 
-def render_command(plan: Plan, out: Path, measured: dict) -> list[str]:
+def render_command(plan: Plan, out: Path, measured: dict, spec: OutputSpec | None = None,
+                   subtitles: Path | None = None) -> list[str]:
+    spec = spec or resolve(plan)
     fps = plan.meta.fps
     inputs = [a for c in plan.video.clips for a in _video_input(c, fps)]
     inputs += [a for c in _audio_clips(plan) for a in _audio_input(c, fps)]
-    graph = _video_graph(plan) + _audio_graph(plan, len(plan.video.clips))
+    graph = _video_graph(plan, spec, subtitles) + _audio_graph(plan, len(plan.video.clips))
     graph.append(f"[amixed]{_loudnorm(measured)},aresample={SAMPLE_RATE}[aout]")
     return [tool("ffmpeg"), "-hide_banner", "-nostats", "-y", *inputs,
             "-filter_complex", ";".join(graph),
             "-map", "[vout]", "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(fps),
-            "-c:a", "aac", "-b:a", "192k", "-ar", str(SAMPLE_RATE),
+            *spec.video_args, "-r", str(spec.fps),
+            *spec.audio_args,
             "-movflags", "+faststart", str(out)]
 
 
@@ -187,9 +234,19 @@ def measure_loudness(plan: Plan) -> dict:
     return measured
 
 
-def render(plan: Plan, out: str | Path | None = None) -> Path:
-    out = Path(out) if out else default_output(plan)
+def render(plan: Plan, out: str | Path | None = None, spec: OutputSpec | None = None,
+           *, normalize: bool = True, captions: bool = True) -> Path:
+    spec = spec or resolve(plan)
+    out = Path(out) if out else default_output(plan, spec)
+    if out.suffix.lower() != spec.ext:
+        raise RenderError(f"{spec.profile} writes {spec.ext} files; output is {out.name}")
     out.parent.mkdir(parents=True, exist_ok=True)
+    if normalize:
+        try:
+            plan = normalize_mod.apply(plan, normalize_mod.normalize_plan(plan, fix=True))
+        except normalize_mod.NormalizeError as exc:
+            raise RenderError(str(exc)) from exc
     measured = measure_loudness(plan)
-    _run(render_command(plan, out, measured), "render")
+    subtitles = write_subtitles(plan, spec) if captions else None
+    _run(render_command(plan, out, measured, spec, subtitles), "render")
     return out

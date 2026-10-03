@@ -64,7 +64,7 @@ def test_valid_brief(ws):
 @pytest.mark.parametrize("changes,expected", [
     ({"extra": 1}, "unsupported field 'extra'"),
     ({"targetSeconds": 5}, "targetSeconds"),
-    ({"recipe": "documentary"}, "only ['explainer']"),
+    ({"recipe": "infomercial"}, "unknown pipeline 'infomercial'"),
     ({"assets": []}, "non-empty array"),
     ({"assets": [{"src": "./assets/orbit.mp4"}]}, "description"),
     ({"assets": [{"src": "./assets/nope.mp4", "description": "x"}]}, "file not found"),

@@ -1,0 +1,10 @@
+{
+  "name": "explainer",
+  "description": "Short explainer: one idea, plain language, one visual per point.",
+  "defaultTargetSeconds": 60,
+  "beatSeconds": [4, 8],
+  "tone": "Clear and friendly, like a good teacher talking to one curious person. Lead with the question, answer it step by step, end on the takeaway.",
+  "briefTemplate": "Explain {topic} to a curious non-specialist: what it is, why it matters, and the one idea that makes it click.",
+  "timing": {"crossfade": 12, "lead": 12, "tail": 9, "endHold": 36, "zoom": 1.06, "easing": "easeInOutCubic"},
+  "captionStyle": "highlight"
+}
