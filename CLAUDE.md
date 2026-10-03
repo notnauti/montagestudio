@@ -61,7 +61,7 @@ See [[logs/index]]
 
 ## Current Status
 
-> **Last updated:** 2026-09-28
-> **Status:** Slice 1 end to end in code: brief → script (Claude / Ollama) → Piper → scene_plan → render → QC. 62 tests. Live model run not yet done (machine memory exhausted; Claude call not yet approved). No published video yet.
+> **Last updated:** 2026-10-03
+> **Status:** Every guide stage that runs on this machine is built: recipes, scrape (Commons/NASA/Archive.org, licensed only) → plan → Piper word captions → contact sheet → approve gate → normalize → render (profiles incl. 4K ProRes) → QC, plus `montage mcp` for agent edits. 244 passed / 1 skipped. Live end to end passed QC 7/7, with a hand-written script. Not run live: the Claude script writer. Not built: `project.ts` compiler, SolidJS canvas, CLIP, generative fallback. No published video yet.
 
 <!-- TODO: Update this as the project progresses -->
