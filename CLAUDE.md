@@ -39,8 +39,9 @@ MontageStudio/
 ├── features/           ← Capability inventory and MVP cut
 ├── logs/               ← Session logs, written by /save
 │
-├── src/montage/        ← Slice 1 code: brief → script → narration → scene_plan, validator, FFmpeg renderer, QC, CLI
-├── tests/              ← pytest; render tests need ffmpeg, the e2e test needs Piper + voice
+├── pipelines/          ← Recipe JSON (explainer, documentary, promo): pacing, tone, timing, caption style
+├── src/montage/        ← The pipeline: scrape/sources → brief → script → narrate/align/captions → plan + validator → contact_sheet/approval → normalize → render/profiles/subtitles → QC; mcp_server/edit/retime/frame_context; CLI
+├── tests/              ← pytest; render tests need ffmpeg, Piper tests need the voice, live network test opt-in (MONTAGE_LIVE_NET=1)
 ├── pyproject.toml      ← `pip install -e .` gives the `montage` command; pytest config
 ├── .venv/              ← gitignored; piper-tts, anthropic, onnxruntime==1.20.1
 └── voices/             ← gitignored; Piper voice models (en_US-lessac-medium)
