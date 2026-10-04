@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-04 — first real publish run: JWST explainer, scrape steered by queries, 3b draft hand-rewritten, QC 7/7; awaiting n@uti's watch + upload; Claude writer blocked on credits → [[2026-10-04-jwst-first-publish-run]]
 - 2026-10-03 — guide gaps built: recipes, profiles, normalize, Piper word captions, scrape + approve gate, MCP server; 244 passed/1 skipped; Claude writer still not run live → [[2026-10-03-guide-gaps-built]]
 - 2026-09-28 — first live run: Ollama script → hand edit → 1080p render QC 5/5; review page published; Claude creds absent → [[2026-09-28-first-live-run-review]]
 - 2026-09-28 — script-from-brief built: brief → Claude/Ollama script → Piper → scene_plan; 62 tests; live model run blocked by machine memory → [[2026-09-28-script-from-brief]]

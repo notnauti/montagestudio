@@ -2,3 +2,6 @@
 .venv/
 voices/
 *.egg-info/
+
+# Per-video workspaces: scraped media, narration, renders. Provenance lives in each manifest.json.
+workspace/
