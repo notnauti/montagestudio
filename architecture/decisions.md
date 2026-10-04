@@ -2,6 +2,9 @@
 
 What was decided and why. Newest first. `/save` appends here; `/resume` reads it.
 
+## 2026-10-04 — Credentials come from the project `.env`, loaded by the CLI entry only
+`montage` reads `.env` at the project root when it runs as a command (`main()` with no argv), with a stdlib parser and no `python-dotenv`. A variable already set in the shell wins. Library code and tests never load it: the suite calls `cli.main([...])` and must never see a real key or make a billed call, and a test that removes `ANTHROPIC_API_KEY` to exercise the Ollama fallback would otherwise have it put back.
+
 ## 2026-10-04 — Workspaces are local and unversioned
 `workspace/` is gitignored: scraped media, narration, caches and renders are large and can be regenerated, and each workspace already carries its provenance in `manifest.json` (source, license, attribution, sha256) and `approval.json`. A video's brief and script live there too, so a published video's inputs are not in git. Copy whatever must survive into the project's numbered folders.
 
