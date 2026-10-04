@@ -7,6 +7,7 @@ plan, an asset no source could supply), 2 a tool, model or network failed, 3 QC 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -300,7 +301,34 @@ def mcp_command(args) -> int:
     return run_stdio(plan_path)
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def load_dotenv(path: Path) -> list[str]:
+    """Set KEY=VALUE lines from `path` into os.environ; variables already set win. Returns the keys set.
+
+    Stdlib only: `#` comments, blank lines, an optional `export ` prefix and matching outer quotes.
+    """
+    if not path.is_file():
+        return []
+    loaded = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.removeprefix("export ").partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:  # a real command line; tests pass argv and never see the project's keys
+        load_dotenv(PROJECT_ROOT / ".env")
     parser = argparse.ArgumentParser(prog="montage")
     sub = parser.add_subparsers(dest="cmd", required=True)
     pipelines = available()
