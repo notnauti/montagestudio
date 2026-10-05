@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-04 — JWST re-plan → preview → approve → 1080p render QC 7/7 → publish-pack merged with hand text; upload still manual (64 MB > browser tool cap) → [[2026-10-04-jwst-replan-publish-pack]]
 - 2026-10-04 — user workflow page + all six upgrades built (gate, candidates/pick, speakable, preview, publish-pack); 403/1; JWST needs re-plan before upload → [[2026-10-04-user-workflow-six-upgrades]]
 - 2026-10-04 — keys moved to project .env, registry vars deleted, montage CLI .env loader (247/1); transcript redaction blocked, revoke both keys → [[2026-10-04-key-hygiene-dotenv-loader]]
 - 2026-10-04 — first real publish run: JWST explainer, scrape steered by queries, 3b draft hand-rewritten, QC 7/7; awaiting n@uti's watch + upload; Claude writer blocked on credits → [[2026-10-04-jwst-first-publish-run]]
