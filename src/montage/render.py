@@ -16,6 +16,10 @@ normalize=False; the render then reads the cached copies.
 
 A caption track is written as an ASS file (subtitles.py) under <workspace>/cache/captions/ and
 burned in with the `ass` filter as the last video step, unless captions=False (--no-captions).
+
+preview() is the same graph at preview_spec() (480p, ultrafast, no zoom supersampling) with one
+single-pass loudnorm instead of the measure + linear pass; it runs on unapproved plans (that is
+its job) and records the plan fingerprint it was made from (review.py) for `montage approve`.
 """
 
 from __future__ import annotations
@@ -27,10 +31,11 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import normalize as normalize_mod
+from . import review
 from . import subtitles as subtitles_mod
 from .plan import Clip, Plan
 from .probe import tool
-from .profiles import OutputSpec, resolve
+from .profiles import OutputSpec, preview_spec, resolve
 
 TARGET_LUFS = -14.0
 TARGET_TP = -1.5
@@ -64,13 +69,17 @@ def out_frames(frames: int, plan: Plan, spec: OutputSpec) -> int:
 
 
 def _supersample(spec: OutputSpec) -> int:
+    if spec.supersample:
+        return spec.supersample
     return max(1, min(SUPERSAMPLE, MAX_ZOOM_EDGE // max(spec.width, spec.height)))
 
 
 # ── inputs ────────────────────────────────────────────────────────────────────
 
-def _video_input(clip: Clip, fps: int) -> list[str]:
+def _video_input(clip: Clip, fps: int, still_once: bool = False) -> list[str]:
     # One spare second on every input; the filter chain pads and trims to the exact frame count.
+    if clip.is_still and still_once:
+        return ["-i", str(clip.src)]  # one decoded frame; the chain fits it once, then loops it
     if clip.is_still:
         return ["-loop", "1", "-framerate", str(fps), "-t", _secs(clip.duration_frames + fps, fps),
                 "-i", str(clip.src)]
@@ -94,12 +103,15 @@ def _ease(frames: int, easing: str) -> str:
 
 def _video_chain(idx: int, clip: Clip, frames: int, spec: OutputSpec, label: str) -> str:
     w, h, fps = spec.width, spec.height, spec.fps
-    f = [f"[{idx}:v]setpts=PTS-STARTPTS", f"fps={fps}"]
+    still_once = clip.is_still and spec.still_once
+    f = [f"[{idx}:v]setpts=PTS-STARTPTS"] + ([] if still_once else [f"fps={fps}"])
     if clip.fit == "cover":
         f += [f"scale={w}:{h}:force_original_aspect_ratio=increase", f"crop={w}:{h}"]
     else:
         f += [f"scale={w}:{h}:force_original_aspect_ratio=decrease",
               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"]
+    if still_once:  # decode + fit the still once, then repeat that frame on the output grid
+        f += [f"loop=loop={max(frames - 1, 0)}:size=1", f"setpts=N/{fps}/TB"]
     if clip.motion:
         m = clip.motion
         ss = _supersample(spec)
@@ -179,8 +191,10 @@ def _audio_graph(plan: Plan, first_input: int) -> list[str]:
     return parts
 
 
-def _loudnorm(measured: dict | None = None) -> str:
+def _loudnorm(measured: dict | None = None, *, one_pass: bool = False) -> str:
     base = f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}:LRA={TARGET_LRA}"
+    if one_pass:  # dynamic mode, no measurement pass: close to the target, not held to QC tolerance
+        return base
     if measured is None:
         return base + ":print_format=json"
     return (base + f":measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
@@ -198,14 +212,15 @@ def measure_command(plan: Plan) -> list[str]:
             "-filter_complex", ";".join(graph), "-map", "[aout]", "-f", "null", "-"]
 
 
-def render_command(plan: Plan, out: Path, measured: dict, spec: OutputSpec | None = None,
+def render_command(plan: Plan, out: Path, measured: dict | None, spec: OutputSpec | None = None,
                    subtitles: Path | None = None) -> list[str]:
+    """measured=None: single-pass loudnorm (the preview); else the linear second pass."""
     spec = spec or resolve(plan)
     fps = plan.meta.fps
-    inputs = [a for c in plan.video.clips for a in _video_input(c, fps)]
+    inputs = [a for c in plan.video.clips for a in _video_input(c, fps, spec.still_once)]
     inputs += [a for c in _audio_clips(plan) for a in _audio_input(c, fps)]
     graph = _video_graph(plan, spec, subtitles) + _audio_graph(plan, len(plan.video.clips))
-    graph.append(f"[amixed]{_loudnorm(measured)},aresample={SAMPLE_RATE}[aout]")
+    graph.append(f"[amixed]{_loudnorm(measured, one_pass=measured is None)},aresample={SAMPLE_RATE}[aout]")
     return [tool("ffmpeg"), "-hide_banner", "-nostats", "-y", *inputs,
             "-filter_complex", ";".join(graph),
             "-map", "[vout]", "-map", "[aout]",
@@ -234,6 +249,13 @@ def measure_loudness(plan: Plan) -> dict:
     return measured
 
 
+def _normalized(plan: Plan) -> Plan:
+    try:
+        return normalize_mod.apply(plan, normalize_mod.normalize_plan(plan, fix=True))
+    except normalize_mod.NormalizeError as exc:
+        raise RenderError(str(exc)) from exc
+
+
 def render(plan: Plan, out: str | Path | None = None, spec: OutputSpec | None = None,
            *, normalize: bool = True, captions: bool = True) -> Path:
     spec = spec or resolve(plan)
@@ -242,11 +264,32 @@ def render(plan: Plan, out: str | Path | None = None, spec: OutputSpec | None = 
         raise RenderError(f"{spec.profile} writes {spec.ext} files; output is {out.name}")
     out.parent.mkdir(parents=True, exist_ok=True)
     if normalize:
-        try:
-            plan = normalize_mod.apply(plan, normalize_mod.normalize_plan(plan, fix=True))
-        except normalize_mod.NormalizeError as exc:
-            raise RenderError(str(exc)) from exc
+        plan = _normalized(plan)
     measured = measure_loudness(plan)
     subtitles = write_subtitles(plan, spec) if captions else None
     _run(render_command(plan, out, measured, spec, subtitles), "render")
+    return out
+
+
+def default_preview(plan: Plan) -> Path:
+    return review.preview_path(plan.workspace)
+
+
+def preview(plan: Plan, plan_path: str | Path, out: str | Path | None = None,
+            *, normalize: bool = True, captions: bool = True) -> Path:
+    """Fast animatic of an (approved or not) plan -> <workspace>/cache/preview.mp4 + its source record.
+
+    One ffmpeg pass: no loudness measurement, single-pass loudnorm. The fingerprint is taken
+    before rendering, so a plan edited mid-render leaves the preview marked stale."""
+    spec = preview_spec(plan)
+    out = Path(out) if out else default_preview(plan)
+    if out.suffix.lower() != spec.ext:
+        raise RenderError(f"the preview is {spec.ext}; output is {out.name}")
+    fp = review.fingerprint(plan, Path(plan_path))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if normalize:
+        plan = _normalized(plan)
+    subtitles = write_subtitles(plan, spec) if captions else None
+    _run(render_command(plan, out, None, spec, subtitles), "preview")
+    review.record(out, "preview", fp, plan.workspace)
     return out

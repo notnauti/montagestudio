@@ -1,17 +1,18 @@
 """The storyboard gate: `montage approve --workspace <dir>` and the check `montage render` runs.
 
 approval.json pins what the director looked at: the sha256 of scene_plan.json and of every
-asset file the plan uses (video and audio, music included), plus the contact sheet's. Render
-recomputes them; any difference -- an edited plan, a re-planned script, a swapped asset --
-means the approval no longer covers the render, and it is refused (exit 1) unless --force.
+asset file the plan uses (video and audio, music included), plus the contact sheet's and/or the
+animatic preview's. Render recomputes them; any difference -- an edited plan, a re-planned script,
+a swapped asset -- means the approval no longer covers the render, and it is refused (exit 1)
+unless --force.
 
-Approving needs a contact sheet at least as new as the plan and its assets, so an approval is
-never given for a storyboard that was not regenerated after a change.
+Approving needs a review artifact made from exactly this plan and these assets: contact_sheet.png
+or the preview (cache/preview.mp4). Each carries a sidecar record (review.py) with the sha256 of
+the plan and assets it was made from, so freshness is decided by content, not file mtime.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from pathlib import Path
 
 from .contact_sheet import SHEET_NAME
 from .plan import Plan
+from .review import asset_paths, fingerprint, preview_path, sha256, stale_reasons  # noqa: F401  (re-exported)
+from .review import rel as _rel
 
 APPROVAL_NAME = "approval.json"
 VERSION = 1
@@ -28,46 +31,27 @@ class ApprovalError(ValueError):
     pass
 
 
-def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _rel(path: Path, workspace: Path) -> str:
-    return path.relative_to(workspace).as_posix() if path.is_relative_to(workspace) else path.as_posix()
-
-
-def asset_paths(plan: Plan) -> list[Path]:
-    seen: dict[Path, None] = {}
-    for clip in plan.video.clips + tuple(c for t in plan.audio for c in t.clips):
-        seen.setdefault(clip.src, None)
-    return list(seen)
-
-
-def fingerprint(plan: Plan, plan_path: Path) -> dict:
-    ws = plan.workspace
-    return {"plan": {"path": plan_path.name, "sha256": sha256(plan_path)},
-            "assets": {_rel(p, ws): sha256(p) for p in asset_paths(plan)}}
-
-
 def approve(plan: Plan, plan_path: str | Path, note: str | None = None) -> Path:
     plan_path = Path(plan_path).resolve()
     ws = plan.workspace
-    sheet = ws / SHEET_NAME
-    if not sheet.is_file():
-        raise ApprovalError(f"no {SHEET_NAME} in {ws}; run `montage contact-sheet \"{ws}\"`, look at it, "
-                            f"then approve")
-    newest = max([plan_path.stat().st_mtime] + [p.stat().st_mtime for p in asset_paths(plan)])
-    if sheet.stat().st_mtime < newest:
-        raise ApprovalError(f"{SHEET_NAME} is older than the plan or one of its assets; run "
-                            f"`montage contact-sheet \"{ws}\"` again and review it before approving")
+    now = fingerprint(plan, plan_path)
+    reviewed = {"contactSheet": ws / SHEET_NAME, "preview": preview_path(ws)}
+    fresh, why = {}, []
+    for key, artifact in reviewed.items():
+        reasons = stale_reasons(artifact, now)
+        if reasons:
+            why += reasons
+        else:
+            fresh[key] = {"path": _rel(artifact, ws), "sha256": sha256(artifact)}
+    if not fresh:
+        raise ApprovalError(
+            "nothing reviewed matches this plan and its assets:\n"
+            + "".join(f"  - {r}\n" for r in why)
+            + f"make one and look at it: montage contact-sheet \"{ws}\" or montage preview \"{ws}\", "
+              f"then approve")
     doc = {"version": VERSION,
            "approvedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-           **fingerprint(plan, plan_path),
-           "contactSheet": {"path": SHEET_NAME, "sha256": sha256(sheet)}}
+           **now, **fresh}
     if note:
         doc["note"] = note
     path = ws / APPROVAL_NAME

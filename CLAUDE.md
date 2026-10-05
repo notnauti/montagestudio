@@ -40,7 +40,7 @@ MontageStudio/
 ├── logs/               ← Session logs, written by /save
 │
 ├── pipelines/          ← Recipe JSON (explainer, documentary, promo): pacing, tone, timing, caption style
-├── src/montage/        ← The pipeline: scrape/sources → brief → script → narrate/align/captions → plan + validator → contact_sheet/approval → normalize → render/profiles/subtitles → QC; mcp_server/edit/retime/frame_context; CLI
+├── src/montage/        ← The pipeline: scrape/sources/candidates/vision → brief → script + script_gate/coverage → speakable/narrate/align/captions → plan + validator → contact_sheet/preview/review/approval → normalize → render/profiles/subtitles → QC → publish; mcp_server/edit/retime/frame_context; CLI
 ├── tests/              ← pytest; render tests need ffmpeg, Piper tests need the voice, live network test opt-in (MONTAGE_LIVE_NET=1)
 ├── pyproject.toml      ← `pip install -e .` gives the `montage` command; pytest config
 ├── .venv/              ← gitignored; piper-tts, anthropic, onnxruntime==1.20.1
@@ -62,7 +62,7 @@ See [[logs/index]]
 
 ## Current Status
 
-> **Last updated:** 2026-10-03
-> **Status:** Every guide stage that runs on this machine is built: recipes, scrape (Commons/NASA/Archive.org, licensed only) → plan → Piper word captions → contact sheet → approve gate → normalize → render (profiles incl. 4K ProRes) → QC, plus `montage mcp` for agent edits. 244 passed / 1 skipped. Live end to end passed QC 7/7, with a hand-written script. Not run live: the Claude script writer. Not built: `project.ts` compiler, SolidJS canvas, CLIP, generative fallback. No published video yet.
+> **Last updated:** 2026-10-04
+> **Status:** Every guide stage that runs on this machine is built, plus the six workflow upgrades: scrape candidates sheet + `--pick` (ranker bugs fixed), script gate + `approve-script`, speakable narration + `pronunciations.json`, `preview` animatic with sha256 approval freshness, `publish-pack`. 403 passed / 1 skipped. Live end to end on a JWST copy: QC 7/7, publish-pack exit 0. Not run live: the Claude script writer, `scrape --vision` (no API credit). Not built: `project.ts` compiler, SolidJS canvas, generative fallback. No published video yet — JWST needs re-plan → preview → approve → render → publish-pack.
 
 <!-- TODO: Update this as the project progresses -->

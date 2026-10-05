@@ -1,4 +1,4 @@
-"""`montage init|scrape|plan|contact-sheet|approve|validate|normalize|render|mcp`.
+"""`montage init|scrape|plan|approve-script|contact-sheet|preview|approve|validate|normalize|render|publish-pack|mcp`.
 
 Exit codes: 0 ok, 1 invalid input (brief, script, plan, pipeline, arguments, an unapproved
 plan, an asset no source could supply), 2 a tool, model or network failed, 3 QC failed.
@@ -25,6 +25,7 @@ from .qc import run_qc
 from .render import RenderError, default_output, render
 from .scaffold import WorkspaceError, init_workspace, slug, synthesize_brief
 from .script import ScriptError
+from .speakable import PronunciationError
 
 
 def _print_errors(label: str, errors: list[str]) -> None:
@@ -77,8 +78,17 @@ def _topic_brief(args) -> Path | int:
     return path
 
 
+def _script_rejected(exc) -> int:
+    for err in exc.errors:
+        print(err, file=sys.stderr)
+    return 1
+
+
 def plan_command(args) -> int:
-    from .planner import run_plan
+    from .planner import ScriptHeld, ScriptRejected, run_plan
+    if args.approve_script and args.rewrite:
+        return _fail("--approve-script approves the script.json you reviewed; run --rewrite first, "
+                     "review the new draft, then --approve-script")
     if args.topic is not None:
         brief_path = _topic_brief(args)
         if isinstance(brief_path, int):
@@ -91,7 +101,10 @@ def plan_command(args) -> int:
     else:
         brief_path = args.brief
     try:
-        result = run_plan(brief_path, writer=args.writer, rewrite=args.rewrite)
+        result = run_plan(brief_path, writer=args.writer, rewrite=args.rewrite,
+                          approve_script=args.approve_script, script_gate=not args.no_script_gate)
+    except ScriptRejected as exc:
+        return _script_rejected(exc)
     except BriefError as exc:
         _print_errors("brief", exc.errors)
         return 1
@@ -101,12 +114,20 @@ def plan_command(args) -> int:
     except PlanError as exc:
         _print_errors("generated plan", exc.errors)
         return 1
-    except ComposeError as exc:
+    except (ComposeError, PronunciationError) as exc:
         print(exc, file=sys.stderr)
         return 1
     except (ScriptError, NarrationError, ToolMissing) as exc:
         print(exc, file=sys.stderr)
         return 2
+    if isinstance(result, ScriptHeld):
+        why = ("script.json changed since it was approved" if result.changed
+               else f"script.json is a draft by {result.script.writer}")
+        print(f"script gate: stopped before narration; {why}")
+        print(f"next: read the table above (and {result.script_path.name}), edit it if needed, then "
+              f"montage plan \"{brief_path}\" --approve-script "
+              f"(or montage approve-script \"{result.brief.workspace}\" and re-run montage plan)")
+        return 0
     meta, target = result.plan.meta, result.brief.target_seconds
     seconds = meta.duration_frames / meta.fps
     print(f"scene plan: {result.plan_path}")
@@ -116,32 +137,83 @@ def plan_command(args) -> int:
         print(f"  note: {seconds:.0f}s is more than 25% off the {target}s target — edit script.json and re-run")
     ws = Path(result.plan_path).parent
     try:
-        sheet = make_contact_sheet(result.plan)
+        sheet = make_contact_sheet(result.plan)  # records <workspace>/scene_plan.json, which plan just wrote
     except (ContactSheetError, ToolMissing) as exc:
         # the plan itself is good; approval will insist on a sheet, so say how to make one
         print(f"contact sheet failed: {exc}\n  retry with: montage contact-sheet \"{ws}\"", file=sys.stderr)
     else:
         print(f"contact sheet: {sheet}")
-    print(f"next: review contact_sheet.png, then montage approve --workspace \"{ws}\" "
-          f"and montage render \"{result.plan_path}\"")
+    print(f"next: review contact_sheet.png (or watch montage preview \"{ws}\"), then "
+          f"montage approve --workspace \"{ws}\" and montage render \"{result.plan_path}\"")
     return 0
 
 
 # ── Stage 2: sourcing and the storyboard gate ─────────────────────────────────
 
+def pick_command(args) -> int:
+    """`scrape <ws> --pick <asset>=<n>`: download a candidate from cache/candidates.json."""
+    from . import net
+    from .candidates import PickError, parse_pick, pick
+    if args.dry_run or args.vision:
+        return _fail("--pick downloads a candidate the last scrape kept; it does not search, "
+                     "so it takes no --dry-run or --vision")
+    ws = Path(args.workspace)
+    if not ws.is_dir():
+        return _fail(f"no workspace at {ws}")
+    try:
+        picks = [parse_pick(spec) for spec in args.pick]
+    except PickError as exc:
+        return _fail(str(exc))
+    code = 0
+    for key, n in picks:
+        try:
+            out, notes = pick(ws, key, n, http=net.Http(), max_mb=args.max_mb)
+        except PickError as exc:
+            print(exc, file=sys.stderr)
+            code = max(code, 1)
+            continue
+        except ToolMissing as exc:
+            return _fail(str(exc), 2)
+        c = out.ranked[0].candidate
+        if out.ok:
+            e = out.entry
+            print(f"pick {key}={n}: saved {out.wanted.src}: {e['source']} {e['sourceId']!r} "
+                  f"{c.title[:60]!r}, {e['bytes'] / 1e6:.2f} MB")
+            print(f"  license {e['license']} ({e['licenseBasis']}); attribution: {e['attribution']}")
+        else:
+            for err in out.errors[-3:]:
+                print(f"  failed: {err}")
+            print(f"pick {key}={n}: {out.wanted.src} NOT replaced (the previous file is untouched)",
+                  file=sys.stderr)
+            code = max(code, 2 if out.errors else 1)
+        for note in notes:
+            print(f"  note: {note}")
+    return code
+
+
 def scrape_command(args) -> int:
     from .net import Http
     from .scrape import RANKING, ScrapeError, scrape
     from .sources import SOURCES
+    if args.max_mb <= 0:
+        return _fail("--max-mb must be positive")
+    if args.pick:
+        return pick_command(args)
     names = [s.strip() for s in args.sources.split(",") if s.strip()]
     unknown = [n for n in names if n not in SOURCES]
     if unknown or not names:
         return _fail(f"--sources: unknown {unknown or 'empty list'}; choose from {sorted(SOURCES)}")
-    if args.max_mb <= 0:
-        return _fail("--max-mb must be positive")
+    scorer = None
+    if args.vision:
+        from . import vision
+        reason = vision.unavailable_reason()
+        if reason:
+            return _fail(f"--vision needs Claude: {reason}", 2)
+        scorer = vision.ClaudeVision()
     try:
         outcomes, notes, manifest = scrape(args.workspace, http=Http(), source_names=names, max_mb=args.max_mb,
-                                           min_score=args.min_score, dry_run=args.dry_run)
+                                           min_score=args.min_score, dry_run=args.dry_run,
+                                           candidates=not args.no_candidates, vision=scorer)
     except ScrapeError as exc:
         return _fail(str(exc))
     except BriefError as exc:
@@ -149,14 +221,15 @@ def scrape_command(args) -> int:
         return 1
     except ToolMissing as exc:
         return _fail(str(exc), 2)
-    for note in notes:
-        print(f"  note: {note}")
     if not outcomes:
+        for note in notes:
+            print(f"  note: {note}")
         print("scrape: every visual in brief.json already has a file; nothing to fetch")
         return 0
     print(f"scrape: {len(outcomes)} wanted visual(s); sources {', '.join(names)}; size cap {args.max_mb:g} MB")
     print(f"  ranking is keyword-based, not CLIP: {RANKING}")
     missing, net_failed = 0, False
+    vision_failed = next((o.vision_error for o in outcomes if o.vision_error), None)
     for o in outcomes:
         w = o.wanted
         print(f"\n  {w.src} [{w.kind}] search words: {' '.join(w.search_words())}")
@@ -171,8 +244,13 @@ def scrape_command(args) -> int:
                   + "; ".join(f"{r} x{n}" for r, n in reasons.most_common(4)))
         for k, s in enumerate(o.ranked[:5], 1):
             c = s.candidate
+            vis = o.vision.get((c.source, c.id))
             print(f"    {k}. {s.score:.3f}  {c.source} {c.id!r}: {c.title[:60]!r}  [{c.license.name}]  "
-                  f"matched: {', '.join(s.matched) or '-'}")
+                  f"matched: {', '.join(w.surface(t) for t in s.matched) or '-'}"
+                  + (f"  penalised: {', '.join(s.penalties)}" if s.penalties else "")
+                  + (f"  vision {vis[0]}/10: {vis[1]}" if vis else ""))
+        if o.vision_error:
+            print(f"    vision failed: {o.vision_error}; kept the lexical order")
         if not o.ranked:
             best = f" (best {o.below[0].score:.3f})" if o.below else ""
             print(f"    no licensed candidate scored >= {args.min_score}{best}; "
@@ -190,15 +268,20 @@ def scrape_command(args) -> int:
             for err in o.errors[-3:]:
                 print(f"    failed: {err}")
             print(f"    -> {w.src} NOT sourced")
+    for note in notes:
+        print(f"  note: {note}")
     if args.dry_run:
-        print("\ndry run: nothing downloaded")
-        return 0
+        print("\ndry run: no assets downloaded" + ("" if args.no_candidates else " (candidate previews only)"))
+        return 2 if vision_failed else 0
     if manifest:
         print(f"\nmanifest: {manifest}")
     if missing:
         print(f"{missing} visual(s) still missing; montage plan needs every file", file=sys.stderr)
-        return 2 if net_failed else 1
+        return 2 if net_failed or vision_failed else 1
     print(f"next: montage plan \"{Path(args.workspace) / 'brief.json'}\"")
+    if vision_failed:
+        print(f"vision re-ranking failed ({vision_failed}); assets were chosen lexically", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -219,17 +302,82 @@ def _load(plan_path: Path):
 
 
 def contact_sheet_command(args) -> int:
-    plan = _load(_workspace_plan(args.workspace))
+    plan_path = _workspace_plan(args.workspace)
+    plan = _load(plan_path)
     if isinstance(plan, int):
         return plan
     try:
-        sheet = make_contact_sheet(plan, args.output)
+        sheet = make_contact_sheet(plan, args.output, plan_path=plan_path)
     except ContactSheetError as exc:
         return _fail(str(exc), 2)
     except ToolMissing as exc:
         return _fail(str(exc), 2)
     print(f"contact sheet: {sheet} ({len(plan.video.clips)} clips)")
     print(f"next: review it, then montage approve --workspace \"{plan.workspace}\"")
+    return 0
+
+
+def preview_command(args) -> int:
+    """`montage preview <ws|plan>`: a fast 480p animatic of the plan as it is, approved or not."""
+    import time
+    from .profiles import preview_spec
+    from .render import default_preview, preview
+    plan_path = _workspace_plan(args.workspace)
+    plan = _load(plan_path)
+    if isinstance(plan, int):
+        return plan
+    spec = preview_spec(plan)
+    out = Path(args.output) if args.output else default_preview(plan)
+    if out.suffix.lower() != spec.ext:
+        return _fail(f"the preview is an {spec.ext} file; -o {out.name} would not match")
+    meta = plan.meta
+    print(f"preview: {spec.width}x{spec.height} @ {spec.fps} fps, libx264 ultrafast, one-pass loudness; "
+          f"{meta.duration_frames / meta.fps:.1f}s"
+          + (f"; captions {'off' if args.no_captions else 'burned in'}" if plan.captions else ""))
+    started = time.monotonic()
+    try:
+        out = preview(plan, plan_path, out, normalize=not args.skip_normalize, captions=not args.no_captions)
+    except (RenderError, ToolMissing) as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    print(f"rendered: {out} in {time.monotonic() - started:.1f}s")
+    code = 0
+    if not args.skip_qc:
+        checks = run_qc(out, plan, spec, loudness=False)
+        for c in checks:
+            print(f"  {'PASS' if c.ok else 'FAIL'}  {c.name}: {c.detail}")
+        code = 0 if all(c.ok for c in checks) else 3
+    default = out.resolve() == default_preview(plan).resolve()
+    status = approval_mod.check(plan, plan_path)
+    if status.approved:
+        print("approval: this plan is already approved")
+    elif default:
+        print(f"next: watch it, then montage approve --workspace \"{plan.workspace}\"")
+    else:
+        print(f"note: montage approve only accepts the preview at {default_preview(plan)}; "
+              f"run without -o to approve from a preview")
+    return code
+
+
+def approve_script_command(args) -> int:
+    from .planner import ScriptRejected, approve_script
+    ws = Path(args.workspace)
+    if ws.name == "brief.json" or ws.name == "script.json":
+        ws = ws.parent
+    try:
+        path = approve_script(ws, args.note)
+    except ScriptRejected as exc:
+        return _script_rejected(exc)
+    except BriefError as exc:
+        _print_errors("brief", exc.errors)
+        return 1
+    except PipelineError as exc:
+        _print_errors("pipeline", exc.errors)
+        return 1
+    except ToolMissing as exc:
+        return _fail(str(exc), 2)
+    print(f"script approved: {path}")
+    print(f"next: montage plan \"{ws / 'brief.json'}\"")
     return 0
 
 
@@ -261,8 +409,8 @@ def _gate(plan, plan_path: Path, force: bool) -> int | None:
     for p in status.problems:
         print(f"  - {p}", file=sys.stderr)
     ws = plan.workspace
-    print(f"review it: montage contact-sheet \"{ws}\", then montage approve --workspace \"{ws}\" "
-          f"(or render anyway with --force)", file=sys.stderr)
+    print(f"review it: montage contact-sheet \"{ws}\" (or montage preview \"{ws}\"), then "
+          f"montage approve --workspace \"{ws}\" (or render anyway with --force)", file=sys.stderr)
     return 1
 
 
@@ -282,6 +430,40 @@ def normalize_command(plan, fix: bool) -> int:
             print(f"         -> {r.normalized.relative_to(plan.workspace)}")
     print(f"normalize: {len(reports)} asset uses, {fixable} need fixing"
           + ("" if fix or not fixable else " (render does this automatically; --fix fills the cache now)"))
+    return 0
+
+
+def publish_pack_command(args) -> int:
+    from .publish import PublishRefused, build, write
+    ws = Path(args.workspace)
+    if ws.is_file():
+        ws = ws.parent
+    if not (ws / "brief.json").is_file():
+        return _fail(f"no brief.json in {ws}; publish-pack needs a planned, approved and rendered workspace")
+    try:
+        pack = build(ws)
+        path = write(pack, force=args.force)
+    except PublishRefused as exc:
+        print("refusing to write the publish pack:", file=sys.stderr)
+        for err in exc.errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+    except FileExistsError as exc:
+        return _fail(str(exc))
+    except BriefError as exc:
+        _print_errors("brief", exc.errors)
+        return 1
+    except PlanError as exc:
+        _print_errors("plan", exc.errors)
+        return 1
+    except ToolMissing as exc:
+        return _fail(str(exc), 2)
+    print(f"publish pack: {path}")
+    print(f"  video: {pack.render.relative_to(path.parents[1]).as_posix()}; {len(pack.credits)} credited asset(s); "
+          f"{len(pack.chapters)} chapter(s); {len(pack.tags)} tag(s)")
+    for note in pack.notes:
+        print(f"  note: {note}")
+    print("next: read it, edit the description, chapter titles and tags, then upload")
     return 0
 
 
@@ -346,6 +528,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--writer", choices=["auto", "claude", "ollama"], default="auto",
                    help="auto: Claude when credentials resolve, else local Ollama")
     p.add_argument("--rewrite", action="store_true", help="write a new script even if script.json exists")
+    p.add_argument("--approve-script", action="store_true",
+                   help="approve script.json as it is now (sha256 in script_approval.json) and go on to narration")
+    p.add_argument("--no-script-gate", action="store_true",
+                   help="do not stop for script approval (automation); a model draft over the hard limits "
+                        "is still rejected")
+
+    asc = sub.add_parser("approve-script", help="approve the workspace's script.json for narration "
+                                                "(records its sha256 in script_approval.json)")
+    asc.add_argument("workspace", help="workspace dir (or its brief.json)")
+    asc.add_argument("--note", help="optional note stored in script_approval.json")
 
     s = sub.add_parser("scrape", help="fetch the brief's missing visuals from Commons / NASA / Archive.org "
                                       "(licensed only) and record them in manifest.json")
@@ -353,11 +545,28 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--sources", default="commons,nasa,archive", help="comma-separated, in tie-break order")
     s.add_argument("--max-mb", type=float, default=50, help="size cap per download (default 50)")
     s.add_argument("--min-score", type=float, default=0.25, help="lowest lexical score to accept (0-1)")
-    s.add_argument("--dry-run", action="store_true", help="search and rank, download nothing")
+    s.add_argument("--dry-run", action="store_true",
+                   help="search and rank; download only the candidate previews, no assets")
+    s.add_argument("--no-candidates", action="store_true",
+                   help="skip the previews, cache/candidates.json and cache/candidates.png")
+    s.add_argument("--pick", action="append", metavar="ASSET=N",
+                   help="download candidate N (1-3, from the last scrape's candidates sheet) for ASSET "
+                        "(asset id, file name or src) and record it in manifest.json; repeatable")
+    s.add_argument("--vision", action="store_true",
+                   help="re-rank the top candidates with Claude vision from their previews "
+                        "(needs Claude credentials; exit 2 without them)")
 
     cs = sub.add_parser("contact-sheet", help="render contact_sheet.png: one frame per visual clip")
     cs.add_argument("workspace", help="workspace dir (uses its scene_plan.json) or a scene_plan.json")
     cs.add_argument("-o", "--output", help="default: <workspace>/contact_sheet.png")
+
+    pv = sub.add_parser("preview", help="fast 480p animatic of scene_plan.json (approved or not) with captions "
+                                        "and narration -> <workspace>/cache/preview.mp4")
+    pv.add_argument("workspace", help="workspace dir (uses its scene_plan.json) or a scene_plan.json")
+    pv.add_argument("-o", "--output", help="default: <workspace>/cache/preview.mp4 (the one approve accepts)")
+    pv.add_argument("--no-captions", action="store_true", help="do not burn in the caption track")
+    pv.add_argument("--skip-normalize", action="store_true", help="read the original assets as they are")
+    pv.add_argument("--skip-qc", action="store_true", help="skip the light QC (frames, size, fps, codecs)")
 
     ap = sub.add_parser("approve", help="approve the storyboard: pin scene_plan.json + assets for render")
     ap.add_argument("--workspace", required=True, help="workspace dir (or its scene_plan.json)")
@@ -386,6 +595,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--force", action="store_true", help="render even if the plan is unapproved or changed "
                                                         "since `montage approve`")
 
+    pp = sub.add_parser("publish-pack", help="write <workspace>/publish/youtube.md: title, description with "
+                                             "chapters and full asset credits, tags, AI-narration disclosure")
+    pp.add_argument("workspace", help="workspace dir (needs an approved plan, a render and manifest.json)")
+    pp.add_argument("--force", action="store_true", help="replace an existing publish/youtube.md")
+
     m = sub.add_parser("mcp", help="MCP server on stdio: timeline edit tools over the workspace's "
                                    "scene_plan.json (every write re-validated)")
     m.add_argument("workspace", help="workspace dir (uses its scene_plan.json) or a scene_plan.json")
@@ -398,10 +612,16 @@ def main(argv: list[str] | None = None) -> int:
         return plan_command(args)
     if args.cmd == "scrape":
         return scrape_command(args)
+    if args.cmd == "approve-script":
+        return approve_script_command(args)
     if args.cmd == "contact-sheet":
         return contact_sheet_command(args)
+    if args.cmd == "preview":
+        return preview_command(args)
     if args.cmd == "approve":
         return approve_command(args)
+    if args.cmd == "publish-pack":
+        return publish_pack_command(args)
 
     try:
         plan = load_plan(args.plan)

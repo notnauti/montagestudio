@@ -88,7 +88,8 @@ def test_parse_script_rejects_unknown_asset_and_motion(ws):
 
 def test_prompt_states_video_word_limit(ws):
     prompt = script_mod.build_prompt(brief(ws))
-    assert "video, 6.0s, at most 15 words" in prompt and "about 45 seconds" in prompt
+    # 18 = int(6.0 s * 3.1 words/s): the rate was recalibrated from 2.5 against real Piper output
+    assert "video, 6.0s, at most 18 words" in prompt and "about 45 seconds" in prompt
 
 
 def test_schema_restricts_assets_to_brief(ws):

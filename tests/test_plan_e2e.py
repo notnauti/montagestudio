@@ -9,6 +9,7 @@ import subprocess
 
 import pytest
 
+from montage import review
 from montage.cli import main
 from montage.narrate import VOICES_DIR
 from montage.plan import load_plan
@@ -64,6 +65,9 @@ def test_plan_then_render(workspace, capsys):
     out = capsys.readouterr().out
     assert "reused script.json" in out and "3 beats" in out
     assert (workspace / "contact_sheet.png").is_file() and "contact sheet:" in out  # the gate's storyboard
+    assert "montage preview" in out
+    record = json.loads((workspace / "contact_sheet.png.source.json").read_text(encoding="utf-8"))
+    assert record["plan"]["sha256"] == review.sha256(workspace / "scene_plan.json")  # approve trusts it
     wavs = sorted((workspace / "assets" / "narration").glob("beat_*.wav"))
     assert len(wavs) == 3
 

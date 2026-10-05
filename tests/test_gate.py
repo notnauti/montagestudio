@@ -161,10 +161,77 @@ def test_approve_needs_a_fresh_contact_sheet(ws):
     with pytest.raises(approval.ApprovalError, match="no contact_sheet.png"):
         approval.approve(plan, path)
     cs.make_contact_sheet(plan)
-    old = time.time() - 100
-    os.utime(ws / "contact_sheet.png", (old, old))
-    with pytest.raises(approval.ApprovalError, match="older than the plan"):
+    raw = json.loads(path.read_text())
+    raw["meta"]["title"] = "Edited after the sheet"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(approval.ApprovalError, match="scene_plan.json changed since contact_sheet.png was made"):
+        approval.approve(load_plan(path), path)
+
+
+def test_contact_sheet_records_what_it_was_drawn_from(ws):
+    path = _plan(ws)
+    plan = load_plan(path)
+    sheet = cs.make_contact_sheet(plan)
+    doc = json.loads((ws / "contact_sheet.png.source.json").read_text())
+    assert doc["kind"] == "contact-sheet" and doc["artifact"]["path"] == "contact_sheet.png"
+    assert doc["artifact"]["sha256"] == approval.sha256(sheet)
+    assert doc["plan"] == {"path": "scene_plan.json", "sha256": approval.sha256(path)}
+    assert doc["assets"] == approval.fingerprint(plan, path)["assets"]
+
+
+def test_freshness_is_by_content_not_mtime(ws):
+    path = _plan(ws)
+    plan = load_plan(path)
+    cs.make_contact_sheet(plan)
+    sheet = ws / "contact_sheet.png"
+    # an unchanged plan that merely looks newer (copied, checked out, touched): still fresh
+    later = time.time() + 100
+    os.utime(path, (later, later))
+    os.utime(ws / "assets" / "voice.wav", (later, later))
+    approval.approve(plan, path)
+    # an edited plan with a sheet that merely looks newer: stale (mtime used to accept this)
+    raw = json.loads(path.read_text())
+    raw["tracks"][0]["clips"][2]["fit"] = "cover"
+    path.write_text(json.dumps(raw))
+    os.utime(sheet, (later + 100, later + 100))
+    with pytest.raises(approval.ApprovalError, match="scene_plan.json changed since"):
+        approval.approve(load_plan(path), path)
+
+
+def test_stale_sheet_reasons(ws):
+    path = _plan(ws)
+    plan = load_plan(path)
+    sheet = cs.make_contact_sheet(plan)
+    side = ws / "contact_sheet.png.source.json"
+    with open(ws / "assets" / "still.png", "ab") as fh:
+        fh.write(b"xx")  # same name, different bytes
+    with pytest.raises(approval.ApprovalError, match="assets changed since contact_sheet.png was made: "
+                                                     "assets/still.png"):
         approval.approve(plan, path)
+
+    cs.make_contact_sheet(plan)
+    shutil.copy(ws / "assets" / "gray.png", sheet)  # replaced by hand after it was made
+    with pytest.raises(approval.ApprovalError, match="not the file its record describes"):
+        approval.approve(plan, path)
+
+    cs.make_contact_sheet(plan)
+    side.write_text("{broken")
+    with pytest.raises(approval.ApprovalError, match="unreadable"):
+        approval.approve(plan, path)
+
+    side.unlink()  # a sheet from before the record existed (or drawn by hand) is not trusted
+    with pytest.raises(approval.ApprovalError, match="has no record of the plan it was made from"):
+        approval.approve(plan, path)
+    assert not (ws / "approval.json").exists()
+
+
+def test_contact_sheet_elsewhere_gets_its_own_record(ws):
+    path = _plan(ws)
+    assert main(["contact-sheet", str(path), "-o", str(ws / "review" / "board.png")]) == 0
+    doc = json.loads((ws / "review" / "board.png.source.json").read_text())
+    assert doc["artifact"]["path"] == "review/board.png" and doc["plan"]["sha256"] == approval.sha256(path)
+    with pytest.raises(approval.ApprovalError, match="no contact_sheet.png"):  # approve reads the default only
+        approval.approve(load_plan(path), path)
 
 
 def test_approval_pins_plan_and_assets(ws):

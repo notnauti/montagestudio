@@ -243,7 +243,7 @@ def test_cli_plan_topic_writes_brief_then_plans(ws, monkeypatch, capsys):
     monkeypatch.setattr(probe_mod, "probe", fake_probe)
     seen = {}
 
-    def fake_run_plan(path, writer, rewrite):
+    def fake_run_plan(path, writer, rewrite, **_gate):  # approve_script / script_gate flags (script gate)
         seen["brief"] = json.loads(Path(path).read_text())
         meta = types.SimpleNamespace(duration_frames=2400, fps=30, title="AGC")
         return types.SimpleNamespace(plan=types.SimpleNamespace(meta=meta), plan_path=ws / "scene_plan.json",

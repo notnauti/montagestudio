@@ -17,7 +17,8 @@ Where the license comes from (API shapes extracted from live responses on 2026-1
             credits a third party (©, "courtesy of", wire services). The manifest marks these
             `licenseBasis: source-policy` so they can be told apart from per-item licenses.
 
-Ranking is lexical, not CLIP (torch is out of scope): see `score`.
+Ranking is lexical, not CLIP (torch is out of scope): see `score`. Search APIs receive words as
+written (`words`); stems (`terms`) are only compared locally.
 """
 
 from __future__ import annotations
@@ -53,22 +54,43 @@ def strip_html(text: str | None) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(text)))).strip()
 
 
-def _stem(word: str) -> str:
-    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
-        return word[:-1]
-    return word
+def stem(word: str) -> str:
+    """A plural-folding key for *local* matching only; never sent to a search API (a stem like
+    "jame" for "james" is fine as a key because both sides of a comparison go through it).
+
+    -ies -> -y (galaxies); -es after s/x/z/ch/sh -> drop "es" (launches, boxes, glasses);
+    words ending -ss / -us / -is are not plurals (glass, nucleus, analysis); any other final s
+    on a word of 4+ letters is dropped (rockets, images, stars)."""
+    if len(word) < 4 or not word.endswith("s") or word.endswith(("ss", "us", "is")):
+        return word
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith(("sses", "shes", "ches", "xes", "zes")):
+        return word[:-2]
+    return word[:-1]
 
 
-def terms(text: str) -> list[str]:
-    """Lowercase alphanumeric words, stopwords dropped, plural 's' stripped, de-duplicated in order."""
+_stem = stem  # older name
+
+
+def words(text: str) -> list[str]:
+    """Lowercase alphanumeric words as written, stopwords dropped, one per stem (first spelling
+    wins). This is what search APIs receive."""
     out: list[str] = []
+    seen: set[str] = set()
     for w in re.findall(r"[a-z0-9]+", (text or "").lower()):
         if w in STOPWORDS or (len(w) < 2 and not w.isdigit()):
             continue
-        w = _stem(w)
-        if w not in out:
+        s = stem(w)
+        if s not in seen:
+            seen.add(s)
             out.append(w)
     return out
+
+
+def terms(text: str) -> list[str]:
+    """`words` folded to their stems: the keys local scoring compares."""
+    return [stem(w) for w in words(text)]
 
 
 # ── licenses ──────────────────────────────────────────────────────────────────
@@ -138,6 +160,8 @@ class Candidate:
     keywords: tuple[str, ...] = ()
     size: int | None = None  # bytes, when the search result says
     extra: dict = field(default_factory=dict, compare=False, hash=False)
+    preview: str | None = None  # a small rendition for the candidates sheet, when the source has one
+    pixels: int | None = None   # width x height of the original, when the search result says
 
 
 @dataclass(frozen=True)
@@ -152,14 +176,45 @@ class Refusal:
 class Scored:
     candidate: Candidate
     score: float
-    matched: tuple[str, ...]
+    matched: tuple[str, ...]          # stems
+    distinctive: int = 0              # matched stems no other asset in the brief uses
+    penalties: tuple[str, ...] = ()   # scene-type mismatches, e.g. "people (title)"
 
 
-def score(c: Candidate, weights: dict[str, float]) -> Scored:
+# Scene types a keyword match cannot see: a photo of engineers in a control room titled "Mirror
+# Deployment" matches "mirror" as well as the mirror does. A candidate whose text names one of
+# these and whose asset's own wording (description, query, narration) does not is marked down.
+SCENE_TYPES = {
+    "people": re.compile(r"\b(engineers?|technicians?|scientists?|workers?|people|crew|staff|employees?|"
+                         r"officials?|administrators?|visitors?|students?|portraits?|pos(?:es|ed|ing)|"
+                         r"ceremony|audience|team members?)\b"),
+    "room": re.compile(r"\b(control rooms?|mission control|operations? cent(?:er|re)s?|mission operations|"
+                       r"auditorium|offices?|press conference|news conference|briefing)\b"),
+    "illustration": re.compile(r"\b(illustrations?|illustrated|artists?|renderings?|animations?|animated|"
+                               r"diagrams?|infographics?|graphics?|sketch(?:es|ed|ing)?|drawings?|cartoons?|"
+                               r"concept art)\b"),
+}
+TITLE_PENALTY = 0.75  # scene type named in the title: the picture is most likely that
+BODY_PENALTY = 0.9    # only in the description / keywords: weaker evidence, captions mention people often
+
+
+def scene_types(text: str) -> set[str]:
+    low = (text or "").lower()
+    return {name for name, rx in SCENE_TYPES.items() if rx.search(low)}
+
+
+def score(c: Candidate, weights: dict[str, float], context: str | None = None,
+          unique: frozenset[str] = frozenset()) -> Scored:
     """Transparent lexical score in [0, 1]: each weighted term counts 2 if it is in the title, 1 if
-    only in the description / keywords, 0 otherwise; divided by the best possible (2 x weight sum)."""
+    only in the description / keywords, 0 otherwise; divided by the best possible (2 x weight sum).
+
+    With `context` (the asset's own wording), each scene type (people, room, illustration) that
+    the candidate names and the context does not multiplies the score by TITLE_PENALTY when the
+    title names it, else BODY_PENALTY when the description / keywords do. `unique` are the
+    asset's distinctive stems; how many matched is kept for tie-breaking."""
     title = set(terms(c.title))
-    body = set(terms(c.description + " " + " ".join(c.keywords)))
+    body_text = c.description + " " + " ".join(c.keywords)
+    body = set(terms(body_text))
     got = best = 0.0
     matched = []
     for t, w in weights.items():
@@ -170,7 +225,19 @@ def score(c: Candidate, weights: dict[str, float]) -> Scored:
         elif t in body:
             got += w
             matched.append(t)
-    return Scored(c, round(got / best, 3) if best else 0.0, tuple(matched))
+    value = got / best if best else 0.0
+    penalties = []
+    if context is not None:
+        allowed = scene_types(context)
+        in_title = scene_types(c.title) - allowed
+        in_body = scene_types(body_text) - allowed - in_title
+        for name in sorted(in_title):
+            value *= TITLE_PENALTY
+            penalties.append(f"{name} (title)")
+        for name in sorted(in_body):
+            value *= BODY_PENALTY
+            penalties.append(f"{name} (description)")
+    return Scored(c, round(value, 3), tuple(matched), sum(1 for t in matched if t in unique), tuple(penalties))
 
 
 @dataclass(frozen=True)
@@ -192,6 +259,26 @@ def _first(value) -> str:
 
 
 # ── Wikimedia Commons ─────────────────────────────────────────────────────────
+
+PREVIEW_WIDTH = 330  # one of Wikimedia's standard thumbnail widths (inferred: other widths are rate-limited)
+
+
+def commons_preview(thumburl: str | None) -> str | None:
+    """The search asks for 1920 px thumbnails; a sheet preview is the same URL at PREVIEW_WIDTH.
+    An original narrower than 1920 px comes back unscaled (no width step in the URL); its preview
+    is built on Wikimedia's thumbnail host and path, thumb.wikimedia.org/.../thumb/<h>/<hh>/<name>/
+    <w>px-<name> (inferred from the URLs the API returned on 2026-10-04; upload.wikimedia.org
+    answered the same path, and the original, with HTTP 429), instead of fetching the original."""
+    if not thumburl:
+        return None
+    if re.search(r"/\d+px-", thumburl):
+        return re.sub(r"/\d+px-", f"/{PREVIEW_WIDTH}px-", thumburl, count=1)
+    m = re.match(r"https?://[^/]+/wikipedia/commons/([0-9a-f]/[0-9a-f]{2}/)([^/?#]+)", thumburl)
+    if m:
+        return (f"https://thumb.wikimedia.org/wikipedia/commons/thumb/{m.group(1)}{m.group(2)}/"
+                f"{PREVIEW_WIDTH}px-{m.group(2)}")
+    return thumburl
+
 
 class Commons:
     name = "commons"
@@ -225,9 +312,11 @@ class Commons:
                 url, size = info.get("url"), info.get("size")
             if not url:
                 continue
+            w, h = info.get("width"), info.get("height")
             cands.append(Candidate(self.name, file_title, title, strip_html(meta.get("ImageDescription"))[:600],
                                    kind, info.get("descriptionurl", ""), lic, f"{artist}, via Wikimedia Commons",
-                                   size=size, extra={"urls": [url]}))
+                                   size=size, extra={"urls": [url]}, preview=commons_preview(info.get("thumburl")),
+                                   pixels=w * h if isinstance(w, int) and isinstance(h, int) and w * h else None))
         return SearchResult(cands, refused, q)
 
     def downloads(self, http: Http, c: Candidate, max_bytes: int) -> list[str]:
@@ -238,6 +327,14 @@ class Commons:
 
 _THIRD_PARTY = re.compile(r"©|\(c\)\s*\d{4}|copyright|courtesy of|getty|reuters|associated press|\bap photo",
                           re.I)
+
+
+def _nasa_preview(links: list) -> str | None:
+    for link in links:
+        href = link.get("href") or ""
+        if link.get("rel") == "preview" or "~thumb" in href:
+            return href or None
+    return None
 
 
 class Nasa:
@@ -268,7 +365,8 @@ class Nasa:
             cands.append(Candidate(self.name, nasa_id, title, strip_html(d.get("description"))[:600], kind,
                                    f"https://images.nasa.gov/details/{urllib.parse.quote(nasa_id)}", lic, who,
                                    tuple(_first(k) for k in d.get("keywords") or []),
-                                   extra={"links": links, "collection": item.get("href")}))
+                                   extra={"links": links, "collection": item.get("href")},
+                                   preview=_nasa_preview(item.get("links") or [])))
         return SearchResult(cands, refused, q)
 
     def downloads(self, http: Http, c: Candidate, max_bytes: int) -> list[str]:
@@ -313,7 +411,8 @@ class Archive:
             cands.append(Candidate(self.name, ident, title, strip_html(_first(doc.get("description")))[:600], kind,
                                    f"{ARCHIVE}/details/{ident}", lic,
                                    f"{creator or 'unknown creator'}, via Internet Archive",
-                                   tuple(str(s) for s in subjects)))
+                                   tuple(str(s) for s in subjects),
+                                   preview=f"{ARCHIVE}/services/img/{urllib.parse.quote(ident)}"))
         return SearchResult(cands, refused, q)
 
     def downloads(self, http: Http, c: Candidate, max_bytes: int) -> list[str]:

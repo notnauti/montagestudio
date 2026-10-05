@@ -10,6 +10,9 @@ outgoing crossfade); without one, from script.json when it has one beat per clip
 FFmpeg only: one call per tile (seek, fit, pad, drawtext), then `tile` + a header. Label text
 goes through drawtext `textfile=` with `expansion=none`, so no narration character needs
 escaping; the paths are escaped for the filtergraph like the caption burn-in.
+
+Next to the sheet goes `<sheet>.source.json` (review.py): the sha256 of the plan and assets it was
+drawn from, which is what `montage approve` checks instead of file times.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import review
 from .plan import Clip, Plan
 from .probe import tool
 from .subtitles import escape_filter_value, filter_path
@@ -138,9 +142,14 @@ def _tile_command(tile: Tile, label: Path, out: Path, w: int, h: int, font: str)
             "-frames:v", "1", "-update", "1", "-vf", vf, str(out)]
 
 
-def make_contact_sheet(plan: Plan, out: str | Path | None = None) -> Path:
-    """Render <workspace>/contact_sheet.png (or `out`) for a validated plan."""
+def make_contact_sheet(plan: Plan, out: str | Path | None = None, plan_path: str | Path | None = None) -> Path:
+    """Render <workspace>/contact_sheet.png (or `out`) for a validated plan.
+
+    `plan_path` is the scene_plan.json the plan was loaded from (default <workspace>/scene_plan.json);
+    when it exists, its fingerprint is recorded beside the sheet for the approval check."""
     out = Path(out) if out else plan.workspace / SHEET_NAME
+    plan_path = Path(plan_path) if plan_path else plan.workspace / "scene_plan.json"
+    fp = review.fingerprint(plan, plan_path) if plan_path.is_file() else None
     work = plan.workspace / "cache" / "contact_sheet"
     work.mkdir(parents=True, exist_ok=True)
     for old in work.glob("*"):
@@ -170,4 +179,6 @@ def make_contact_sheet(plan: Plan, out: str | Path | None = None) -> Path:
     _run([tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-framerate", "1",
           "-i", "tile_%03d.png", "-vf", vf, "-frames:v", "1", "-update", "1", str(out.resolve())],
          "contact sheet grid", cwd=work)
+    if fp is not None:
+        review.record(out, "contact-sheet", fp, plan.workspace)
     return out

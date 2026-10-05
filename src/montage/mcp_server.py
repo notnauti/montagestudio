@@ -47,7 +47,8 @@ INSTRUCTIONS = (
     "Edits one MontageStudio workspace's scene_plan.json (the Tier 1 -> Tier 2 contract). Frames are "
     "timeline frames at meta.fps. Every edit is re-validated; a rejected edit changes nothing. Pass "
     "dryRun: true to check an edit without writing. Call plan_summary first to see clip ids. Any edit "
-    "invalidates the storyboard approval: run `montage contact-sheet` and `montage approve` before rendering."
+    "invalidates the storyboard approval: run `montage contact-sheet` (or `montage preview`) and "
+    "`montage approve` before rendering."
 )
 
 

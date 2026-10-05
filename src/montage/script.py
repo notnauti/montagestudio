@@ -14,12 +14,16 @@ import urllib.request
 from dataclasses import dataclass
 
 from .brief import Brief
+from .coverage import brief_points
 from .pipeline import Pipeline, load_pipeline
 
 CLAUDE_MODEL = "claude-opus-5"
 OLLAMA_MODEL = os.environ.get("MONTAGE_OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-WORDS_PER_SECOND = 2.5  # Piper's en_US voices at default speed
+# Piper en_US-lessac-medium at default speed: 222 words in 70.4 s of wav on the JWST run
+# (2026-10-03; 2.4-3.8 per line). Was 2.5, which made every estimate ~25% long.
+WORDS_PER_SECOND = 3.1
+RUNTIME_TOLERANCE = 0.15  # the script gate rejects a model draft estimated longer than target * 1.15
 MOTIONS = ("none", "zoom_in", "zoom_out")
 
 
@@ -60,7 +64,13 @@ Split the script into beats. A beat is one to three sentences said over one visu
 visual from the asset list only, by matching what is being said to the asset's description; reuse an \
 asset when nothing else fits. For still images choose a slow zoom_in or zoom_out to keep the frame \
 alive; for videos choose none. A video asset can only cover as much narration as its length allows, \
-so keep beats over video assets within their word limit."""
+so keep beats over video assets within their word limit.
+
+The brief lists the points the video must make. Cover every one of them, in the order given; a \
+point may take more than one beat, but none may be skipped. Every sentence must carry a fact or a \
+picture from the brief or the assets: no filler openers ("Have you ever wondered"), no restating \
+what was just said, no generic sign-off ("And that is how..."), no padding to reach a length. Stay \
+inside the word and beat limits; a script over them is rejected."""
 
 SYSTEM = SYSTEM_TEMPLATE.format(kind="explainer")  # the explainer prompt, unchanged from slice 1
 
@@ -86,14 +96,24 @@ def _asset_lines(brief: Brief) -> str:
 
 def build_prompt(brief: Brief, pipeline: Pipeline | None = None) -> str:
     p = _pipeline(brief, pipeline)
-    words = int(brief.target_seconds * WORDS_PER_SECOND)
-    fewest, most = p.beat_range(brief.target_seconds)
+    target = brief.target_seconds
+    fewest, most = p.beat_range(target)
     lo_s, hi_s = p.beat_seconds
+    r, mid = p.recipe, (fewest + most) // 2
+    pauses = (mid * r.lead + (mid - 1) * r.tail + r.end_hold) / r.fps  # silence the planner adds
+    speech = max(1.0, target - pauses)
+    words = int(speech * WORDS_PER_SECOND)
+    limit = int(max(1.0, target * (1 + RUNTIME_TOLERANCE) - pauses) * WORDS_PER_SECOND)
+    points = brief_points(brief.text)
+    point_lines = "\n".join(f"{i}. {pt}" for i, pt in enumerate(points, 1)) or "(the brief as a whole)"
     return (f"Title: {brief.title}\n\nBrief:\n{brief.text}\n\n"
+            f"Points to cover, in this order (every one, none skipped):\n{point_lines}\n\n"
             f"Format: {p.name} — {p.description}\n"
             f"Tone and pacing: {p.tone}\n\n"
-            f"Target length: about {brief.target_seconds} seconds of narration, roughly {words} words in total.\n"
-            f"Beats: write {fewest} to {most} beats, each {lo_s:g} to {hi_s:g} seconds "
+            f"Target length: the finished video runs about {target} seconds. The pauses between beats take "
+            f"about {pauses:.0f} of them, so write about {speech:.0f} seconds of narration, roughly {words} "
+            f"words in total, and never more than {limit} words.\n"
+            f"Beats: write {fewest} to {most} beats (more than {most} is rejected), each {lo_s:g} to {hi_s:g} seconds "
             f"({int(lo_s * WORDS_PER_SECOND)} to {int(hi_s * WORDS_PER_SECOND)} words) of narration.\n\n"
             f"Assets:\n{_asset_lines(brief)}")
 

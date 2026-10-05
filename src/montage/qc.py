@@ -54,7 +54,8 @@ def _loudness(path: Path) -> tuple[float | None, float | None]:
     return as_float(i), as_float(peak)
 
 
-def run_qc(path: str | Path, plan: Plan, spec: OutputSpec | None = None) -> list[Check]:
+def run_qc(path: str | Path, plan: Plan, spec: OutputSpec | None = None, *, loudness: bool = True) -> list[Check]:
+    """loudness=False is the preview's light QC: stream shape only, no EBU R128 pass."""
     path = Path(path)
     spec = spec or resolve(plan)
     expect_frames = out_frames(plan.meta.duration_frames, plan, spec)
@@ -82,6 +83,8 @@ def run_qc(path: str | Path, plan: Plan, spec: OutputSpec | None = None) -> list
         return checks
     acodec = audio.get("codec_name")
     checks.append(Check("audio codec", acodec == spec.audio_codec, f"{acodec}, {want} {spec.audio_codec}"))
+    if not loudness:
+        return checks
     integrated, true_peak = _loudness(path)
     checks.append(Check(
         "loudness", integrated is not None and abs(integrated - TARGET_LUFS) <= LUFS_TOLERANCE,

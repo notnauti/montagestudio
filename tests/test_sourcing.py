@@ -166,7 +166,7 @@ def test_refusal_reasons_say_why():
 
 def test_terms_drop_stopwords_and_plurals():
     assert terms("The Saturn V rockets of the Apollo-11 launches, slow pan footage") == \
-        ["saturn", "rocket", "apollo", "11", "launche"]
+        ["saturn", "rocket", "apollo", "11", "launch"]  # -es after ch is dropped whole
     assert terms("glass gas") == ["glass", "gas"]  # no stem on 'ss' or short words
 
 

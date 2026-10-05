@@ -3,12 +3,16 @@
 A brief asset whose `src` file does not exist yet is *wanted*. Its `src` says what to fetch:
 the extension picks the kind (.png/.jpg/.jpeg/.webp = image, .mp4/.mov/.mkv/.webm/.m4v =
 video) and the file lands exactly there, so brief.json, script.json and the plan never need
-rewriting. Search words come from the asset's optional `query`, else its `description`;
-ranking also weighs the narration of any script.json beat that already uses the asset.
+rewriting. Search words come from the asset's optional `query` (sent whole, as written, minus
+stopwords), else its `description` minus stopwords and minus the words every asset in the brief
+shares (the topic, which tells no asset apart), capped at QUERY_TERMS. Ranking also weighs the
+narration of any script.json beat that already uses the asset.
 
 Per wanted asset: search every source, drop candidates without a usable license, score the rest
-lexically (sources.score), then try the best ones in order until one downloads under the size
-cap and ffprobe can read it. A different container (Commons .webm for an .mp4 src, .jpg for a
+lexically (sources.score, with a scene-type penalty; ties go to the candidate matching more of
+the asset's distinctive words, then the larger original), keep the top CANDIDATES as previews
+for the candidates sheet (candidates.py; optionally re-ranked by Claude vision), then try the
+best ones in order until one downloads under the size cap and ffprobe can read it. A different container (Commons .webm for an .mp4 src, .jpg for a
 .png src) is converted with ffmpeg. Provenance goes to <workspace>/manifest.json, keyed by src.
 """
 
@@ -26,18 +30,20 @@ from .brief import BriefError
 from .net import Http, NetError, TooLarge
 from .plan import STILL_EXTS
 from .probe import ProbeError, probe as default_probe, tool
-from .sources import Refusal, Scored, make_sources, score, terms, url_ext
+from .sources import Refusal, Scored, make_sources, score, stem, terms, url_ext, words
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 MANIFEST = "manifest.json"
 DEFAULT_SOURCES = ("commons", "nasa", "archive")
 DEFAULT_MAX_MB = 50
 DEFAULT_MIN_SCORE = 0.25
-QUERY_TERMS = 5        # words sent to a search
+QUERY_TERMS = 5        # words sent to a search built from a description (an explicit query is sent whole)
 BEAT_WEIGHT = 0.5      # narration words count half as much as the description / query
 TRIES = 5              # candidates tried per asset before giving up
 RANKING = ("lexical: 2 per weighted term in the title, 1 if only in description/keywords, "
-           "divided by the maximum; description/query terms weigh 1, beat narration terms 0.5")
+           "divided by the maximum; description/query terms weigh 1, beat narration terms 0.5; "
+           "x0.75 per scene type (people/room/illustration) the title names and the asset does not, "
+           "x0.9 if only the description names it; ties: more distinctive terms, then larger original")
 
 
 class ScrapeError(ValueError):
@@ -52,9 +58,28 @@ class Wanted:
     description: str
     query: str | None
     beat_text: str
+    shared: frozenset[str] = frozenset()  # stems every asset in the brief uses (the topic)
+    unique: frozenset[str] = frozenset()  # stems no other asset in the brief uses
 
     def search_words(self) -> list[str]:
-        return terms(self.query or self.description)[:QUERY_TERMS]
+        """Original spellings, never stems. An explicit query goes whole; a description drops the
+        brief-wide topic words first (unless that would leave fewer than two), then is capped."""
+        if self.query:
+            return words(self.query)
+        all_words = words(self.description)
+        own = [w for w in all_words if stem(w) not in self.shared]
+        return (own if len(own) >= 2 else all_words)[:QUERY_TERMS]
+
+    def context(self) -> str:
+        """The asset's own wording, which says what kind of scene it wants."""
+        return " ".join(x for x in (self.description, self.query or "", self.beat_text) if x)
+
+    def surface(self, term: str) -> str:
+        """The word as the brief or narration wrote it, for a stem ("jame" -> "james")."""
+        for w in words(self.context()):
+            if stem(w) == term:
+                return w
+        return term
 
     def weights(self) -> dict[str, float]:
         w = {t: 1.0 for t in terms(self.query or "") + terms(self.description)}
@@ -73,6 +98,9 @@ class Outcome:
     queries: dict[str, str] = field(default_factory=dict)
     chosen: Scored | None = None
     entry: dict | None = None  # manifest entry when downloaded
+    previews: dict = field(default_factory=dict)  # (source, id) -> local preview Path, or None
+    vision: dict = field(default_factory=dict)    # (source, id) -> (score 0-10, reason)
+    vision_error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -82,6 +110,17 @@ class Outcome:
 def target_kind(src: str) -> str | None:
     ext = Path(src).suffix.lower()
     return "image" if ext in STILL_EXTS else "video" if ext in VIDEO_EXTS else None
+
+
+def _term_sets(assets: list) -> tuple[frozenset[str], dict[int, set[str]]]:
+    """Per brief asset (by index), the stems of its description + query; and the stems all of
+    them share. A single-asset brief shares nothing (there is no other asset to tell it from)."""
+    own = {i: set(terms(f"{a.get('description') or ''} {a.get('query') or ''}"))
+           for i, a in enumerate(assets) if isinstance(a, dict) and isinstance(a.get("description"), str)
+           and (a.get("query") is None or isinstance(a.get("query"), str))}
+    sets = [t for t in own.values() if t]
+    shared = frozenset(set.intersection(*sets)) if len(sets) >= 2 else frozenset()
+    return shared, own
 
 
 def wanted_assets(workspace: Path) -> tuple[list[Wanted], list[str]]:
@@ -102,6 +141,7 @@ def wanted_assets(workspace: Path) -> tuple[list[Wanted], list[str]]:
         except (OSError, json.JSONDecodeError, AttributeError):
             beats = []
     assets_dir = (workspace / "assets").resolve()
+    shared, own = _term_sets(raw["assets"])
     errs, wanted, notes = [], [], []
     for i, a in enumerate(raw["assets"]):
         where = f"brief.assets[{i}]"
@@ -132,7 +172,9 @@ def wanted_assets(workspace: Path) -> tuple[list[Wanted], list[str]]:
             continue
         beat_text = " ".join(b.get("narration", "") for b in beats
                              if isinstance(b, dict) and b.get("asset") == src)
-        wanted.append(Wanted(src, p, kind, desc.strip(), query.strip() if query else None, beat_text))
+        others = set().union(*(t for j, t in own.items() if j != i))
+        wanted.append(Wanted(src, p, kind, desc.strip(), query.strip() if query else None, beat_text,
+                             shared, frozenset(own.get(i, set()) - others)))
     music = raw.get("music")
     if isinstance(music, dict) and isinstance(music.get("src"), str) \
             and not (workspace / music["src"]).is_file():
@@ -166,9 +208,10 @@ def search(w: Wanted, http: Http, sources: list, min_score: float = DEFAULT_MIN_
             continue
         out.queries[src_obj.name] = result.query
         out.refused += result.refused
-        pool += [score(c, weights) for c in result.candidates]
+        pool += [score(c, weights, w.context(), w.unique) for c in result.candidates]
     order = {s.name: i for i, s in enumerate(sources)}
-    pool.sort(key=lambda s: (-s.score, order[s.candidate.source]))
+    pool.sort(key=lambda s: (-s.score, -s.distinctive, -(s.candidate.pixels or 0), -(s.candidate.size or 0),
+                             order[s.candidate.source]))
     out.ranked = [s for s in pool if s.score >= min_score]
     out.below = [s for s in pool if s.score < min_score]
     return out
@@ -274,7 +317,7 @@ def fetch(out: Outcome, http: Http, sources: list, workspace: Path, max_bytes: i
                 "downloadUrl": url, "license": c.license.name, "licenseUrl": c.license.url,
                 "licenseBasis": c.license.basis, "attribution": c.attribution,
                 "query": out.queries.get(c.source, ""), "score": scored.score,
-                "matchedTerms": list(scored.matched), "ranking": RANKING,
+                "matchedTerms": [w.surface(t) for t in scored.matched], "ranking": RANKING,
                 "bytes": w.path.stat().st_size, "downloadedBytes": size, "sha256": _sha256(w.path),
                 "convertedFrom": converted,
                 "retrievedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -302,7 +345,12 @@ def write_manifest(workspace: Path, outcomes: list[Outcome]) -> Path | None:
 
 def scrape(workspace: str | Path, *, http: Http | None = None, source_names=DEFAULT_SOURCES,
            max_mb: float = DEFAULT_MAX_MB, min_score: float = DEFAULT_MIN_SCORE, dry_run: bool = False,
-           probe=default_probe) -> tuple[list[Outcome], list[str], Path | None]:
+           probe=default_probe, candidates: bool = False, vision=None,
+           ) -> tuple[list[Outcome], list[str], Path | None]:
+    """`candidates`: keep the top CANDIDATES per asset as previews in cache/candidates/ and write
+    cache/candidates.json + cache/candidates.png (a dry run still fetches those small previews).
+    `vision`: a scorer (see vision.py) that re-ranks them from their previews before anything is
+    downloaded; its first failure is recorded and the rest of the run stays lexical."""
     ws = Path(workspace).resolve()
     if not (ws / "brief.json").is_file():
         raise ScrapeError(f"no brief.json in {ws}; run `montage init \"{ws}\"` and list the visuals you want")
@@ -310,10 +358,19 @@ def scrape(workspace: str | Path, *, http: Http | None = None, source_names=DEFA
     http = http or Http()
     sources = make_sources(source_names)
     outcomes = []
+    keep = candidates or vision is not None
+    if keep:
+        from . import candidates as cand_mod
     for w in wanted:
         out = search(w, http, sources, min_score)
+        if keep:
+            cand_mod.keep_previews(out, http, ws)
+            if vision is not None and not cand_mod.apply_vision(out, vision):
+                vision = None  # it failed once (credits, network): the rest of the run stays lexical
         if not dry_run:
             fetch(out, http, sources, ws, int(max_mb * 1_000_000), probe=probe)
         outcomes.append(out)
     manifest = None if dry_run else write_manifest(ws, outcomes)
+    if keep:
+        notes += cand_mod.write_candidates(ws, outcomes)
     return outcomes, notes, manifest

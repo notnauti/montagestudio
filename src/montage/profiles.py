@@ -71,6 +71,8 @@ class OutputSpec:
     video_args: tuple[str, ...]
     audio_args: tuple[str, ...]
     notes: tuple[str, ...] = field(default=())
+    supersample: int = 0  # zoompan supersampling factor; 0 = the renderer's default for this size
+    still_once: bool = False  # decode and fit each still once and loop it (preview), not re-read per frame
 
 
 def _even(x: float) -> int:
@@ -142,6 +144,23 @@ def select_h264_encoder(mode: str, width: int, height: int, fps: int, run=subpro
 
 
 # ── spec ──────────────────────────────────────────────────────────────────────
+
+PREVIEW_PROFILE = "preview-480p"
+PREVIEW_SHORT_EDGE = 480
+# Speed over quality: ultrafast + crf 30 (inferred: plenty to judge picture, pacing and captions).
+_PREVIEW_H264 = ("-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p")
+_PREVIEW_AAC = ("-c:a", "aac", "-b:a", "128k", "-ar", str(SAMPLE_RATE))
+
+
+def preview_spec(plan: Plan) -> OutputSpec:
+    """The animatic preview (`montage preview`): 480p short edge at the plan's own fps, libx264
+    ultrafast, no zoom supersampling, each still decoded once (image2 -loop re-reads and re-decodes
+    the file for every frame: 14 s vs 0.4 s for 300 frames of a 2220x1665 JPEG, measured). Not a
+    --profile: a preview is for review, never delivery."""
+    w, h = output_size(plan.meta.width, plan.meta.height, PREVIEW_SHORT_EDGE)
+    return OutputSpec(PREVIEW_PROFILE, w, h, plan.meta.fps, "h264", "aac", "yuv420p", "libx264", ".mp4",
+                      _PREVIEW_H264, _PREVIEW_AAC, supersample=1, still_once=True)
+
 
 def resolve(plan: Plan, profile: str | None = None, encoder: str = "software", run=subprocess.run) -> OutputSpec:
     """Profile name (None = the plan's own size and fps, H.264) -> OutputSpec for this plan."""
