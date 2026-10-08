@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-08 — JWST re-check: title fixed, thumbnail still YouTube auto frame; inbox-file deletion left uncommitted; pushed → [[2026-10-08-jwst-title-thumbnail-recheck]]
 - 2026-10-08 — JWST URL recorded (youtu.be/uicRn1QgrsU); live title is the filename and thumbnail is YouTube's auto frame — fix in Studio → [[2026-10-08-jwst-url-recorded]]
 - 2026-10-08 — correction: "publish-pack thumbnail bug" was a 10-04 hand pick, not code; no fix, auto-thumbnail deferred → [[2026-10-08-thumbnail-bug-correction]]
 - 2026-10-08 — FIRST VIDEO PUBLISHED: JWST explainer uploaded by n@uti, audio OK; clean thumbnail made (pack's frame fell in a crossfade) → [[2026-10-08-jwst-first-video-published]]
