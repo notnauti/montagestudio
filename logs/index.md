@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-08 — FIRST VIDEO PUBLISHED: JWST explainer uploaded by n@uti, audio OK; clean thumbnail made (pack's frame fell in a crossfade) → [[2026-10-08-jwst-first-video-published]]
 - 2026-10-08 — spec gap audit (Tier 2 compiler + Tier 3 canvas unbuilt; done test needs studio refine); CLAUDE.md status line updated; JWST waits on manual upload → [[2026-10-08-spec-gap-audit-status-line]]
 - 2026-10-04 — JWST re-plan → preview → approve → 1080p render QC 7/7 → publish-pack merged with hand text; upload still manual (64 MB > browser tool cap) → [[2026-10-04-jwst-replan-publish-pack]]
 - 2026-10-04 — user workflow page + all six upgrades built (gate, candidates/pick, speakable, preview, publish-pack); 403/1; JWST needs re-plan before upload → [[2026-10-04-user-workflow-six-upgrades]]
