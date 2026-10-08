@@ -23,29 +23,9 @@ If a session is polishing a tier no user has touched, nudge: *"Who ran the last 
 
 ## Folder Structure
 
-```
-MontageStudio/
-├── 00 Specifications/  ← Input: technical guide, briefs, upstream research
-├── 01 Build/           ← Process: active build work
-├── 02 Shipped/         ← Output: released and verified slices
-├── 03 System/          ← Scripts, config, reusable processes
-├── 04 Skills/          ← Skill markdown files (not Claude Code skills)
-├── 05 Attachments/     ← Images, screenshots, contact sheets, PDFs
-├── 06 Iteration Logs/  ← Notes on what to improve
-│
-├── architecture/       ← Decisions: how it's built and why (/resume reads decisions.md)
-├── pipeline/           ← Stage-by-stage data flow, CLI commands, external APIs
-├── data/               ← scene_plan / manifest / captions schemas
-├── features/           ← Capability inventory and MVP cut
-├── logs/               ← Session logs, written by /save
-│
-├── pipelines/          ← Recipe JSON (explainer, documentary, promo): pacing, tone, timing, caption style
-├── src/montage/        ← The pipeline: scrape/sources/candidates/vision → brief → script + script_gate/coverage → speakable/narrate/align/captions → plan + validator → contact_sheet/preview/review/approval → normalize → render/profiles/subtitles → QC → publish; mcp_server/edit/retime/frame_context; CLI
-├── tests/              ← pytest; render tests need ffmpeg, Piper tests need the voice, live network test opt-in (MONTAGE_LIVE_NET=1)
-├── pyproject.toml      ← `pip install -e .` gives the `montage` command; pytest config
-├── .venv/              ← gitignored; piper-tts, anthropic, onnxruntime==1.20.1
-└── voices/             ← gitignored; Piper voice models (en_US-lessac-medium)
-```
+`ls` and `pyproject.toml` show the layout. What they don't show:
+- `tests/`: render tests need ffmpeg, Piper tests need the voice, live network test opt-in (`MONTAGE_LIVE_NET=1`).
+- `.venv/` and `voices/` are gitignored: `.venv` holds piper-tts, anthropic, onnxruntime==1.20.1; `voices/` holds the Piper model (en_US-lessac-medium).
 
 ## Rules & Conventions
 
@@ -62,7 +42,7 @@ See [[logs/index]]
 
 ## Current Status
 
-> **Last updated:** 2026-10-04
-> **Status:** Every guide stage that runs on this machine is built, plus the six workflow upgrades: scrape candidates sheet + `--pick` (ranker bugs fixed), script gate + `approve-script`, speakable narration + `pronunciations.json`, `preview` animatic with sha256 approval freshness, `publish-pack`. 403 passed / 1 skipped. Live end to end on a JWST copy: QC 7/7, publish-pack exit 0. Not run live: the Claude script writer, `scrape --vision` (no API credit). Not built: `project.ts` compiler, SolidJS canvas, generative fallback. No published video yet — JWST needs re-plan → preview → approve → render → publish-pack.
+> **Last updated:** 2026-10-08
+> **Status:** Every guide stage that runs on this machine is built, plus the six workflow upgrades: scrape candidates sheet + `--pick` (ranker bugs fixed), script gate + `approve-script`, speakable narration + `pronunciations.json`, `preview` animatic with sha256 approval freshness, `publish-pack`. 403 passed / 1 skipped. JWST re-run done 2026-10-04 on the real workspace: re-plan → preview → approve → 1080p render QC 7/7 (81.4 s) → `publish/youtube.md` merged with hand text. Not run live: the Claude script writer, `scrape --vision` (no API credit). Not built: `project.ts` compiler, SolidJS canvas, generative fallback. No published video yet — blocked only on n@uti watching the render and uploading it manually in YouTube Studio (64 MB master > browser tool's 10 MB cap).
 
 <!-- TODO: Update this as the project progresses -->
