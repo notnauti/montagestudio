@@ -16,7 +16,7 @@ import base64
 import json
 from pathlib import Path
 
-VISION_MODEL = "claude-opus-5-5"
+from .script import CLAUDE_MODEL as VISION_MODEL  # one model constant for every Claude call
 MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif",
                ".webp": "image/webp"}
 

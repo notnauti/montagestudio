@@ -437,14 +437,27 @@ def normalize_command(plan, fix: bool) -> int:
 
 
 def publish_pack_command(args) -> int:
-    from .publish import PublishRefused, build, write
+    from .publish import PACK_DIR, PACK_NAME, PublishRefused, build, render_thumbnails, with_thumbnails, write
     ws = Path(args.workspace)
     if ws.is_file():
         ws = ws.parent
     if not (ws / "brief.json").is_file():
         return _fail(f"no brief.json in {ws}; publish-pack needs a planned, approved and rendered workspace")
+    existing = ws / PACK_DIR / PACK_NAME
+    if existing.exists() and not args.force:   # before the model call and the grabs (they replace the old ones)
+        return _fail(f"{existing} already exists; re-run with --force to replace it")
+    drafter = None
+    if args.draft:
+        from . import vision
+        from .drafts import ClaudeDrafter
+        reason = vision.unavailable_reason()
+        if reason:
+            return _fail(f"--draft needs Claude: {reason}", 2)
+        drafter = ClaudeDrafter()
     try:
-        pack = build(ws)
+        pack = build(ws, drafter=drafter)
+        made, failed = render_thumbnails(pack)
+        pack = with_thumbnails(pack, made, failed)
         path = write(pack, force=args.force)
     except PublishRefused as exc:
         print("refusing to write the publish pack:", file=sys.stderr)
@@ -463,7 +476,10 @@ def publish_pack_command(args) -> int:
         return _fail(str(exc), 2)
     print(f"publish pack: {path}")
     print(f"  video: {pack.render.relative_to(path.parents[1]).as_posix()}; {len(pack.credits)} credited asset(s); "
-          f"{len(pack.chapters)} chapter(s); {len(pack.tags)} tag(s)")
+          f"{len(pack.chapters)} chapter(s); {len(pack.tags)} tag(s); "
+          f"{len(made)} of {len(pack.thumbs)} thumbnail candidate(s)")
+    for n, why in failed.items():
+        print(f"  warning: thumbnail {n} not rendered: {why}", file=sys.stderr)
     for note in pack.notes:
         print(f"  note: {note}")
     minutes = args.hands_on_min
@@ -475,6 +491,9 @@ def publish_pack_command(args) -> int:
         print(f"  note: hands-on minutes not recorded; add them with montage stats \"{ws}\" --hands-on-min N")
     print("next: read it, edit the description, chapter titles and tags, then upload; after 7 and 28 days, "
           f"montage stats \"{ws}\" --day 7 --views N --avg-view-seconds S")
+    if pack.draft_error:
+        print(f"--draft failed ({pack.draft_error}); the pack was written with the brief's text", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -666,6 +685,9 @@ def main(argv: list[str] | None = None) -> int:
                                              "chapters and full asset credits, tags, AI-narration disclosure")
     pp.add_argument("workspace", help="workspace dir (needs an approved plan, a render and manifest.json)")
     pp.add_argument("--force", action="store_true", help="replace an existing publish/youtube.md")
+    pp.add_argument("--draft", action="store_true",
+                    help="have Claude draft the title, description intro, chapter titles and tags from the "
+                         "approved script (needs Claude credentials; exit 2 without them)")
     pp.add_argument("--hands-on-min", type=float, metavar="N",
                     help="minutes you spent hands-on, brief to publish pack (asked on a terminal when omitted)")
 

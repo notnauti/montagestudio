@@ -2,7 +2,8 @@
 
 Inputs: brief.json (title, premise, voice, recipe), script.json (beats -> chapter titles),
 scene_plan.json (beat timings), approval.json (the storyboard gate), manifest.json (provenance of
-every sourced asset) and the newest file in renders/. Nothing is asked of a model.
+every sourced asset) and the newest file in renders/. Nothing is asked of a model unless `--draft`
+(drafts.py) has Claude write the title, description intro, chapter titles and tags.
 
 Refused (PublishRefused, exit 1), with every reason listed:
   - the plan is not approved as it is now (same check as `montage render`);
@@ -17,13 +18,21 @@ rules: the first at 0:00, each at least 10 s (short beats are merged into the ch
 at least 3, else the list is left out with a note. Chapter titles are the first clause of the
 chapter's first beat, a draft to edit. The pack never overwrites publish/youtube.md without
 `force`, and never touches <ws>/youtube.md (a hand-written one stays the person's).
+
+Thumbnail candidates: up to THUMB_COUNT frames, one per source file, spread over the video, each
+at the middle of the span where its clip is alone on screen and at least THUMB_MARGIN frames from
+any cut or crossfade (the JWST pack's hand-picked frame fell inside a crossfade: a double exposure).
+`render_thumbnails` grabs them through the renderer's own filter chain, captions off, as 1280 px
+JPEGs under YouTube's 2 MB limit in publish/thumb_candidates/. They are suggestions: a failed grab
+is listed in the pack, never a refusal.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+import subprocess
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +57,12 @@ DESCRIPTION_CHARS = 5000
 BRIEF_FILLER = frozenset("""short long imaginative educational audience viewers viewer general beginners
 video videos documentary explainer promo like need needs made make makes first last little brief""".split())
 _NARRATION_FILE = re.compile(r"^beat_\d{2,}_[0-9a-f]{10}\.wav$")
+THUMB_DIR = "thumb_candidates"
+THUMB_COUNT = 3
+THUMB_MARGIN = 6           # frames clear of a cut or a crossfade
+THUMB_WIDTH = 1280         # YouTube's recommended thumbnail width
+THUMB_MAX_BYTES = 2_000_000
+THUMB_QUALITY = (2, 4, 7, 10)   # mjpeg -q:v steps tried until the file fits THUMB_MAX_BYTES
 
 
 class PublishRefused(ValueError):
@@ -69,6 +84,13 @@ class Chapter:
 
 
 @dataclass(frozen=True)
+class Thumb:
+    frame: int
+    clip_id: str
+    src: Path
+
+
+@dataclass(frozen=True)
 class Pack:
     path: Path
     text: str
@@ -77,6 +99,10 @@ class Pack:
     chapters: tuple[Chapter, ...]
     tags: tuple[str, ...]
     notes: tuple[str, ...]
+    plan: Plan | None = None
+    thumbs: tuple[Thumb, ...] = ()
+    draft_model: str | None = None    # set when Claude drafted the viewer-facing text
+    draft_error: str | None = None    # set when --draft was asked for and failed
 
 
 # ── checks ───────────────────────────────────────────────────────────────────
@@ -202,6 +228,17 @@ def chapters(raw_plan: dict, script: Script, fps: int, duration_frames: int) -> 
     return out, None
 
 
+def chapter_narration(raw_plan: dict, script: Script, chs: list[Chapter], fps: int) -> list[tuple[str, list[str]]]:
+    """(timestamp, narration of every beat the chapter merged) per chapter, for the drafter."""
+    starts = _beat_starts(raw_plan, len(script.beats))
+    if not chs or starts is None:
+        return []
+    secs = [0] + [f // fps for f in starts[1:]]
+    first = [secs.index(c.seconds) for c in chs]
+    ends = first[1:] + [len(script.beats)]
+    return [(stamp(c.seconds), [b.narration for b in script.beats[a:z]]) for c, a, z in zip(chs, first, ends)]
+
+
 def stamp(seconds: int) -> str:
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
@@ -274,8 +311,86 @@ def disclosure(brief: Brief, ws: Path) -> str:
     return line
 
 
-def build(workspace: str | Path, probe=None, now: datetime | None = None) -> Pack:
-    """Everything the pack needs, checked; PublishRefused lists every reason it cannot be written."""
+def thumbnail_frames(plan: Plan, count: int = THUMB_COUNT, margin: int = THUMB_MARGIN) -> list[Thumb]:
+    """One frame per source file, spread over the video, each mid-way through the span where its clip is
+    alone on screen and `margin` frames clear of any cut or crossfade. Fewer when fewer clips qualify."""
+    clips = sorted(plan.video.clips, key=lambda c: c.start_frame)
+    seen: set[Path] = set()
+    eligible: list[Thumb] = []
+    for i, c in enumerate(clips):
+        lo = c.start_frame + (clips[i - 1].crossfade_frames if i else 0) + margin  # the previous fade is over
+        hi = c.end_frame - (c.crossfade_frames if i < len(clips) - 1 else 0) - margin - 1  # the next not begun
+        hi = min(hi, plan.meta.duration_frames - 1)
+        if lo <= hi and c.src not in seen:
+            seen.add(c.src)
+            eligible.append(Thumb((lo + hi) // 2, c.id, c.src))
+    if len(eligible) <= count:
+        return eligible
+    step = len(eligible) / count
+    return [eligible[int(step * k + step / 2)] for k in range(count)]
+
+
+def _to_jpeg(png: Path, out: Path) -> None:
+    from .probe import tool
+    for q in THUMB_QUALITY:
+        r = subprocess.run([tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-i", str(png),
+                            "-q:v", str(q), "-frames:v", "1", "-update", "1", str(out)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if r.returncode != 0 or not out.is_file():
+            raise RuntimeError(f"jpeg encode failed: {r.stderr.strip()[-300:]}")
+        if out.stat().st_size <= THUMB_MAX_BYTES:
+            return
+    raise RuntimeError(f"still {out.stat().st_size / 1e6:.1f} MB at the lowest quality tried; "
+                       f"YouTube allows {THUMB_MAX_BYTES / 1e6:g} MB")
+
+
+def render_thumbnails(pack: Pack) -> tuple[dict[int, Path], dict[int, str]]:
+    """Grab pack.thumbs into publish/thumb_candidates/thumb_<n>.jpg (old ones removed first).
+    Returns ({n: path}, {n: why it failed}); never raises for a failed frame."""
+    from .frame_context import FrameError, grab
+    from .probe import ToolMissing
+    out_dir = pack.path.parent / THUMB_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("thumb_*.jpg"):
+        old.unlink()
+    made, failed = {}, {}
+    for n, t in enumerate(pack.thumbs, 1):
+        png = pack.plan.workspace / "cache" / "inspect" / f"thumb_{n}.png"
+        out = out_dir / f"thumb_{n}.jpg"
+        try:
+            grab(pack.plan, t.frame, png, captions=False, max_width=THUMB_WIDTH)
+            _to_jpeg(png, out)
+            made[n] = out
+        except (FrameError, ToolMissing, RuntimeError, OSError) as exc:
+            out.unlink(missing_ok=True)
+            failed[n] = str(exc).splitlines()[0]
+    return made, failed
+
+
+def with_thumbnails(pack: Pack, made: dict[int, Path], failed: dict[int, str]) -> Pack:
+    """The pack with its '## Thumbnail' section (before the upload settings)."""
+    ws, fps = pack.plan.workspace, pack.plan.meta.fps
+    lines = ["## Thumbnail",
+             f"Candidates: one frame per source file, at least {THUMB_MARGIN} frames clear of any cut or "
+             f"crossfade, captions off, {THUMB_WIDTH} px JPEG. Pick one, or make your own.", ""]
+    for n, t in enumerate(pack.thumbs, 1):
+        src = t.src.relative_to(ws).as_posix() if t.src.is_relative_to(ws) else t.src.name
+        where = f"{stamp(t.frame // fps)} (frame {t.frame}), clip {t.clip_id}, {src}"
+        if n in made:
+            lines.append(f"- `{made[n].relative_to(ws).as_posix()}` — {where}")
+        else:
+            lines.append(f"- thumb_{n}: not rendered ({failed.get(n, 'skipped')}) — {where}")
+    if not pack.thumbs:
+        lines.append("- none: no clip is alone on screen long enough; make one by hand")
+    section = "\n".join(lines) + "\n\n"
+    return replace(pack, text=pack.text.replace("## Upload settings", section + "## Upload settings", 1))
+
+
+def build(workspace: str | Path, probe=None, now: datetime | None = None, drafter=None) -> Pack:
+    """Everything the pack needs, checked; PublishRefused lists every reason it cannot be written.
+    `drafter` (drafts.ClaudeDrafter) replaces title, description intro, chapter titles and tags with a
+    model draft; when it fails the deterministic text stays and Pack.draft_error says why."""
+    from .drafts import DraftError
     from .planner import ScriptRejected, _read_script
     probe = probe or default_probe
     ws = Path(workspace).resolve()
@@ -316,9 +431,22 @@ def build(workspace: str | Path, probe=None, now: datetime | None = None) -> Pac
     if why:
         notes.append(why)
     tag_list = tags(brief)
+    title, intro, draft, draft_error = brief.title, brief.text, None, None
+    if drafter is not None:
+        try:
+            draft = drafter(brief.title, brief.text, [b.narration for b in script.beats],
+                            chapter_narration(raw_plan, script, chs, meta.fps))
+        except DraftError as exc:
+            draft_error = str(exc)
+            notes.append(f"draft failed ({exc}); the pack uses the brief's text")
+    if draft:
+        title, intro, tag_list = draft.title, draft.description, list(draft.tags)
+        chs = [Chapter(c.seconds, t) for c, t in zip(chs, draft.chapter_titles)]
+        notes.append(f"title, description intro, chapter titles and tags drafted by {draft.model}: "
+                     f"check every fact against the script")
     nasa = any(c.entry.get("source") == "nasa" or c.entry.get("licenseBasis") == "source-policy" for c in credits)
 
-    desc = [brief.text, ""]
+    desc = [intro, ""]
     if chs:
         desc += ["Chapters:"] + [f"{stamp(c.seconds)} {c.title}" for c in chs] + [""]
     desc.append("Credits:")
@@ -331,8 +459,8 @@ def build(workspace: str | Path, probe=None, now: datetime | None = None) -> Pac
     desc += ["", disclosure(brief, ws), "Made with MontageStudio."]
     description = "\n".join(desc)
 
-    if len(brief.title) > TITLE_CHARS:
-        notes.append(f"title is {len(brief.title)} characters; YouTube allows {TITLE_CHARS}")
+    if len(title) > TITLE_CHARS:
+        notes.append(f"title is {len(title)} characters; YouTube allows {TITLE_CHARS}")
     if len(description) > DESCRIPTION_CHARS:
         notes.append(f"description is {len(description)} characters; YouTube allows {DESCRIPTION_CHARS}")
     if "<" in description or ">" in description:
@@ -346,12 +474,16 @@ def build(workspace: str | Path, probe=None, now: datetime | None = None) -> Pac
         "",
         f"<!-- written by montage publish-pack {when}; a draft: edit freely. Re-running it needs --force "
         f"and replaces this file. -->",
+        *([f"<!-- title, description intro, chapter titles and tags drafted by {draft.model} from the "
+           f"approved script: check every fact. Credits, NASA line and disclosure are copied from the "
+           f"records. -->"] if draft else []),
         "",
         f"- Video file: `{rel_render}` ({seconds:.1f} s)",
         f"- Storyboard approved: {status.approved_at or 'yes'}",
         "",
         "## Title",
-        brief.title,
+        title,
+        *([f"<!-- the brief's title: {brief.title} -->"] if draft and title != brief.title else []),
         "",
         "## Description",
         description,
@@ -365,7 +497,8 @@ def build(workspace: str | Path, probe=None, now: datetime | None = None) -> Pac
         "",
     ]
     return Pack(ws / PACK_DIR / PACK_NAME, "\n".join(lines), render, tuple(credits), tuple(chs),
-                tuple(tag_list), tuple(notes))
+                tuple(tag_list), tuple(notes), plan, tuple(thumbnail_frames(plan)),
+                draft.model if draft else None, draft_error)
 
 
 def write(pack: Pack, force: bool = False) -> Path:

@@ -140,7 +140,7 @@ def test_claude_request_shape(ws, fake_claude):
     s = script_mod.write_with_claude(brief(ws))
     assert s.writer == "claude-opus-5" and len(s.beats) == 2
     call = fake_claude.calls[0]
-    assert call["model"] == "claude-opus-5"
+    assert call["model"] == script_mod.CLAUDE_MODEL == "claude-opus-5-5"
     assert call["fallbacks"] == "default" and call["betas"] == ["server-side-fallback-2026-07-01"]
     assert call["thinking"] == {"type": "adaptive"}
     assert call["output_config"]["format"]["type"] == "json_schema"

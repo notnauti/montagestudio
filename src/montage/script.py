@@ -1,6 +1,6 @@
 """Brief -> script: a title plus beats, each a line of narration and the asset shown under it.
 
-Two writers behind one call. Claude (claude-opus-5) when credentials resolve; local Ollama
+Two writers behind one call. Claude (CLAUDE_MODEL) when credentials resolve; local Ollama
 (qwen2.5:7b) otherwise. Both get the same prompt and the same JSON schema, and both results
 go through the same validation, so the planner never sees an asset that isn't in the brief.
 """
@@ -17,7 +17,7 @@ from .brief import Brief
 from .coverage import brief_points
 from .pipeline import Pipeline, load_pipeline
 
-CLAUDE_MODEL = "claude-opus-5"
+CLAUDE_MODEL = "claude-opus-5-5"  # the one Claude model montage uses: writer, vision, publish drafts
 OLLAMA_MODEL = os.environ.get("MONTAGE_OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # Piper en_US-lessac-medium at default speed: 222 words in 70.4 s of wav on the JWST run
