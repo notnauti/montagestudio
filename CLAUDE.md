@@ -8,7 +8,7 @@ Agentic video pipeline. Tier 1 (macro-production, adapted from OpenMontage) turn
 
 Build partner and scope cop. Turn the spec into the smallest end-to-end slice a real user can run, keep the scene-plan contract honest across tiers, and push back when work drifts into tiers no user has asked for.
 
-**Done means:** Functioning Production Studio — checked by: from one brief, n@uti gets a rendered video they would publish (plan → assets → gate → scene_plan → studio refine → render) without hand-editing generated code.
+**Done means:** Functioning Production Studio — checked by: from one brief, n@uti gets a rendered video they would publish (plan → assets → gate → scene_plan → refine (agent edits via `montage mcp`, seen in `montage view` + preview) → render) without hand-editing generated code — 4 times in 6 weeks at ≤3 h hands-on each.
 
 Because this runs alongside the primary target, it gets the leftover time, not the best time. If a MontageStudio session starts while Agent Harness OS has an open next step toward users, nudge: *"Is the harness moving this week?"*
 If a session is polishing a tier no user has touched, nudge: *"Who ran the last thing we shipped?"*
@@ -42,7 +42,7 @@ See [[logs/index]]
 
 ## Current Status
 
-> **Last updated:** 2026-10-08
-> **Status:** Every guide stage that runs on this machine is built, plus the six workflow upgrades: scrape candidates sheet + `--pick` (ranker bugs fixed), script gate + `approve-script`, speakable narration + `pronunciations.json`, `preview` animatic with sha256 approval freshness, `publish-pack`. 403 passed / 1 skipped. JWST re-run done 2026-10-04 on the real workspace: re-plan → preview → approve → 1080p render QC 7/7 (81.4 s) → `publish/youtube.md` merged with hand text. Not run live: the Claude script writer, `scrape --vision` (no API credit). Not built: `project.ts` compiler, SolidJS canvas, generative fallback. **First video published 2026-10-08:** JWST explainer (https://www.youtube.com/watch?v=uicRn1QgrsU), uploaded by n@uti in YouTube Studio, audio checked by n@uti. Title fixed in Studio ("How the James Webb space telescope unfolded"); custom gold-mirror thumbnail live (re-uploaded, verified 2026-10-08). Done test met except "studio refine" (canvas, slice 2).
+> **Last updated:** 2026-10-26
+> **Status:** Every guide stage that runs on this machine is built, plus the six workflow upgrades: scrape candidates sheet + `--pick` (ranker bugs fixed), script gate + `approve-script`, speakable narration + `pronunciations.json`, `preview` animatic with sha256 approval freshness, `publish-pack`. 403 passed / 1 skipped. JWST re-run done 2026-10-04 on the real workspace: re-plan → preview → approve → 1080p render QC 7/7 (81.4 s) → `publish/youtube.md` merged with hand text. Not run live: the Claude script writer, `scrape --vision` (no API credit). Not built: `project.ts` compiler, SolidJS canvas, generative fallback. **First video published 2026-10-08:** JWST explainer (https://www.youtube.com/watch?v=uicRn1QgrsU), uploaded by n@uti in YouTube Studio, audio checked by n@uti. Title fixed in Studio ("How the James Webb space telescope unfolded"); custom gold-mirror thumbnail live (re-uploaded, verified 2026-10-08). **2026-10-26:** done test redefined by the cadence PRD ([[00 Specifications/(C) 2026-10-26-montagestudio-production-cadence-mvp-prd]]): canvas deferred, refine = `montage mcp` + `montage view`; 0 of 4 videos so far (JWST predates it). Next: Phase 0 (fund credit, rotate keys, JWST stats backfill, 4 briefs, hours/week + spend ceiling).
 
 <!-- TODO: Update this as the project progresses -->

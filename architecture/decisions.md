@@ -2,6 +2,9 @@
 
 What was decided and why. Newest first. `/save` appends here; `/resume` reads it.
 
+## 2026-10-26 — Next MVP is production cadence, not the canvas; done test redefined; scene_plan shape unchanged
+Slice 1 already produced a published video, and the JWST run's hand work was mostly Tier 1 and publish packaging (script rewrite, asset queries and picks, thumbnail/title/description), not timeline fine-tuning. So the guide's most expensive tier had the least evidence behind it. The done test's "studio refine" now means agent edits through `montage mcp`, seen in a local read-only `montage view` page + the 480p preview, and done means 4 publishable videos in 6 weeks at ≤3 h hands-on each. The Tier 2 `project.ts` compiler and Tier 3 SolidJS / Diffusion Studio canvas are deferred until the per-video ledger shows refine friction dominating. Generative fallback and a research step are gated on recorded evidence (archive shortfall or factual fixes on ≥2 videos). The web view never writes the plan; any future write goes through `edit.py` + the validator. Spec: [[00 Specifications/(C) 2026-10-26-montagestudio-production-cadence-mvp-prd]].
+
 ## 2026-10-04 — `--approve-script` needs a script.json that already exists; scene_plan shape unchanged
 Found in review of the script gate: `montage plan <brief> --approve-script` on a workspace with no script.json had the model write a draft and approved it in the same run, so narration went ahead on a script nobody had read. The flag was already refused with `--rewrite` for the same reason. It is now also refused (exit 1, before any model call) when there is no script.json: run `montage plan` once, read the draft it stops on, then approve it. Regression test in tests/test_script_gate.py.
 

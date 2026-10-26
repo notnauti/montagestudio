@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-26 — production cadence PRD approved (4 videos/6 wks, ≤3 h each); done test redefined, canvas deferred; Phase 0 next → [[2026-10-26-production-cadence-prd-done-test]]
 - 2026-10-08 — JWST custom thumbnail live after re-upload (verified); video metadata complete → [[2026-10-08-jwst-thumbnail-live]]
 - 2026-10-08 — JWST re-check: title fixed, thumbnail still YouTube auto frame; inbox-file deletion left uncommitted; pushed → [[2026-10-08-jwst-title-thumbnail-recheck]]
 - 2026-10-08 — JWST URL recorded (youtu.be/uicRn1QgrsU); live title is the filename and thumbnail is YouTube's auto frame — fix in Studio → [[2026-10-08-jwst-url-recorded]]
