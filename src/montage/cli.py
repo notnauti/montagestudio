@@ -1,4 +1,6 @@
-"""`montage init|scrape|plan|approve-script|contact-sheet|preview|approve|validate|normalize|render|publish-pack|mcp`.
+"""`montage init|scrape|plan|approve-script|contact-sheet|preview|approve|validate|normalize|render|publish-pack|stats|mcp`.
+
+Every command run on a workspace is appended to <workspace>/production_log.jsonl (production.py).
 
 Exit codes: 0 ok, 1 invalid input (brief, script, plan, pipeline, arguments, an unapproved
 plan, an asset no source could supply), 2 a tool, model or network failed, 3 QC failed.
@@ -20,6 +22,7 @@ from .narrate import NarrationError
 from .pipeline import DEFAULT_PIPELINE, PipelineError, available, load_pipeline
 from .plan import PlanError, load_plan
 from .probe import ToolMissing
+from .production import LEDGER
 from .profiles import DEFAULT_PROFILE, ENCODER_MODES, PROFILES, resolve
 from .qc import run_qc
 from .render import RenderError, default_output, render
@@ -463,7 +466,71 @@ def publish_pack_command(args) -> int:
           f"{len(pack.chapters)} chapter(s); {len(pack.tags)} tag(s)")
     for note in pack.notes:
         print(f"  note: {note}")
-    print("next: read it, edit the description, chapter titles and tags, then upload")
+    minutes = args.hands_on_min
+    if minutes is None and sys.stdin.isatty():
+        minutes = _ask_minutes()
+    from .production import build_summary
+    _save_summary(ws, build_summary(ws, render=pack.render, hands_on_min=minutes), args.ledger)
+    if minutes is None:
+        print(f"  note: hands-on minutes not recorded; add them with montage stats \"{ws}\" --hands-on-min N")
+    print("next: read it, edit the description, chapter titles and tags, then upload; after 7 and 28 days, "
+          f"montage stats \"{ws}\" --day 7 --views N --avg-view-seconds S")
+    return 0
+
+
+def _ask_minutes() -> float | None:
+    try:
+        raw = input("hands-on minutes on this video, brief to publish pack (Enter to skip): ").strip()
+    except EOFError:
+        return None
+    try:
+        value = float(raw) if raw else None
+    except ValueError:
+        print(f"  '{raw}' is not a number; skipped", file=sys.stderr)
+        return None
+    return value if value is None or value >= 0 else None
+
+
+def _save_summary(ws: Path, summary: dict, ledger: Path | None) -> None:
+    """Write <ws>/publish/production_summary.json and mirror it into the ledger (when there is one)."""
+    from . import production
+    print(f"production summary: {production.write_summary(ws, summary)}")
+    for line in production.describe(summary):
+        print(f"  {line}")
+    if ledger:
+        print(f"  ledger: {production.upsert_ledger(ledger, summary)}")
+
+
+def stats_command(args) -> int:
+    """`montage stats <ws>`: show the production summary; record hands-on minutes, URL and YouTube stats."""
+    from . import production
+    ws = Path(args.workspace)
+    if ws.is_file():
+        ws = ws.parent
+    if not (ws / "brief.json").is_file():
+        return _fail(f"no brief.json in {ws}; montage stats needs a workspace")
+    if (args.views is None) != (args.day is None):
+        return _fail("--day and --views go together (e.g. --day 7 --views 120 --avg-view-seconds 41)")
+    if args.avg_view_seconds is not None and args.day is None:
+        return _fail("--avg-view-seconds needs --day and --views")
+    for name in ("views", "avg_view_seconds", "hands_on_min"):
+        value = getattr(args, name)
+        if value is not None and value < 0:
+            return _fail(f"--{name.replace('_', '-')} cannot be negative")
+    changed = any(v is not None for v in (args.day, args.url, args.hands_on_min))
+    summary = production.build_summary(ws, hands_on_min=args.hands_on_min)
+    if args.url:
+        summary["url"] = args.url
+    if args.day is not None:
+        production.record_youtube(summary, args.day, args.views, args.avg_view_seconds)
+    if not changed:   # show only; nothing is written
+        saved = production.summary_path(ws).is_file()
+        print(f"production summary: {production.summary_path(ws)}" if saved
+              else "no production summary yet (publish-pack writes one); derived from the workspace now:")
+        for line in production.describe(summary):
+            print(f"  {line}")
+        return 0
+    _save_summary(ws, summary, args.ledger)
     return 0
 
 
@@ -599,11 +666,69 @@ def main(argv: list[str] | None = None) -> int:
                                              "chapters and full asset credits, tags, AI-narration disclosure")
     pp.add_argument("workspace", help="workspace dir (needs an approved plan, a render and manifest.json)")
     pp.add_argument("--force", action="store_true", help="replace an existing publish/youtube.md")
+    pp.add_argument("--hands-on-min", type=float, metavar="N",
+                    help="minutes you spent hands-on, brief to publish pack (asked on a terminal when omitted)")
+
+    st = sub.add_parser("stats", help="show a video's production summary; record hands-on minutes, its URL "
+                                      "and YouTube stats (mirrored into the project's production ledger)")
+    st.add_argument("workspace")
+    st.add_argument("--hands-on-min", type=float, metavar="N", help="minutes spent hands-on (replaces the record)")
+    st.add_argument("--url", help="the published video's URL")
+    st.add_argument("--day", type=int, choices=[7, 28], help="days since publishing the stats were read at")
+    st.add_argument("--views", type=int, help="views at --day")
+    st.add_argument("--avg-view-seconds", type=float, metavar="S", help="average view duration at --day")
 
     m = sub.add_parser("mcp", help="MCP server on stdio: timeline edit tools over the workspace's "
                                    "scene_plan.json (every write re-validated)")
     m.add_argument("workspace", help="workspace dir (uses its scene_plan.json) or a scene_plan.json")
     args = parser.parse_args(argv)
+    # The ledger is versioned project state: a real command line writes it, a test only when it names one.
+    ledger = os.environ.get("MONTAGE_LEDGER")
+    args.ledger = Path(ledger) if ledger else (PROJECT_ROOT.joinpath(*LEDGER) if argv is None else None)
+    return _logged(args, sys.argv[1:] if argv is None else list(argv))
+
+
+def _command_workspace(args) -> Path | None:
+    """The workspace a command works on, for production_log.jsonl; None when it has none yet."""
+    if args.cmd == "init":
+        return Path(args.dir)
+    if args.cmd == "plan":
+        if args.topic is not None:
+            return Path(args.workspace) if args.workspace else Path("workspace") / slug(args.topic)
+        return Path(args.brief).parent if args.brief else None
+    if args.cmd in ("contact-sheet", "preview", "mcp"):
+        return _workspace_plan(args.workspace).parent
+    if args.cmd in ("validate", "normalize", "render"):
+        return Path(args.plan).parent
+    ws = Path(args.workspace)
+    return ws.parent if ws.is_file() else ws
+
+
+def _logged(args, argv: list[str]) -> int:
+    """Run the command and append it to <ws>/production_log.jsonl, whatever the outcome."""
+    import time
+    from datetime import datetime, timezone
+    from .production import log_command
+    started, t0 = datetime.now(timezone.utc), time.monotonic()
+    code: int | str = "exception"
+    try:
+        code = _dispatch(args)
+        return code
+    except KeyboardInterrupt:
+        code = "interrupted"
+        raise
+    finally:
+        try:
+            ws = _command_workspace(args)
+        except Exception:  # noqa: BLE001 -- measurement must never fail the command it measures
+            ws = None
+        if ws is not None:
+            log_command(ws, args.cmd, argv, started, time.monotonic() - t0, code)
+
+
+def _dispatch(args) -> int:
+    if args.cmd == "stats":
+        return stats_command(args)
     if args.cmd == "mcp":
         return mcp_command(args)
     if args.cmd == "init":
