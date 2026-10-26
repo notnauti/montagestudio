@@ -4,7 +4,9 @@ import http.client
 import json
 import shutil
 import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -119,6 +121,22 @@ def test_a_failed_grab_leaves_no_half_written_frame(server, ws, monkeypatch):
     monkeypatch.undo()
     res, body = _req(server, "GET", "/api/frame?n=21")
     assert res.status == 200 and len(body) > 100 and out.read_bytes() == body
+
+
+@needs_ffmpeg
+def test_a_hung_grab_times_out_and_frees_the_next_frame(server, ws, monkeypatch):
+    # a stuck ffmpeg held view.job forever, so every frame after it stalled
+    import montage.frame_context as fc
+    monkeypatch.setattr(fc, "GRAB_TIMEOUT", 1)
+    monkeypatch.setattr(fc, "grab_command", lambda *a: [sys.executable, "-c", "import time; time.sleep(30)"])
+    t0 = time.monotonic()
+    res, body = _req(server, "GET", "/api/frame?n=22")
+    assert res.status == 500 and b"timed out" in body and time.monotonic() - t0 < 10
+    out = ws / "cache" / "view" / server.view.snapshot()["frameKey"] / "f_000022.png"
+    assert not out.exists() and not out.with_name(out.stem + ".part.png").exists()
+    monkeypatch.undo()
+    res, body = _req(server, "GET", "/api/frame?n=22")
+    assert res.status == 200 and body[:4] == b"\x89PNG"
 
 
 @pytest.mark.parametrize("q", ["n=-1", "n=99999", "n=x", ""])

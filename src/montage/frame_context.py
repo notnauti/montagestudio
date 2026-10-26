@@ -27,6 +27,9 @@ from .probe import tool
 from .profiles import resolve
 
 
+GRAB_TIMEOUT = 120  # seconds; one frame takes a few, so this only trips on a hung ffmpeg
+
+
 class FrameError(RuntimeError):
     pass
 
@@ -152,8 +155,12 @@ def grab(plan: Plan, frame: int, out: Path | None = None, *, normalize: bool = T
     # never sees a half-written PNG and a failed grab leaves nothing behind
     part = out.with_name(out.stem + ".part.png")
     part.unlink(missing_ok=True)
-    r = subprocess.run(grab_command(plan, frame, part, subtitles, max_width), capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    try:
+        r = subprocess.run(grab_command(plan, frame, part, subtitles, max_width), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=GRAB_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:  # run() has killed it; view.frame holds a lock around this
+        part.unlink(missing_ok=True)
+        raise FrameError(f"frame grab timed out after {GRAB_TIMEOUT} s") from exc
     if r.returncode != 0 or not part.is_file():
         part.unlink(missing_ok=True)
         tail = "\n".join(r.stderr.strip().splitlines()[-15:])
