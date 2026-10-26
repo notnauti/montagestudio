@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-26 — `montage view`: ffmpeg timeouts on frame grabs (120 s) and the preview render (max(120 s, 10× length)), so a hung ffmpeg can't hold the frame lock; 494/1 → [[2026-10-26-view-ffmpeg-timeouts]]
 - 2026-10-26 — `montage view`: frame-load browser regression test committed; half-written/failed frame PNG fix (atomic `grab`); 491/1 → [[2026-10-26-view-frame-bugs]]
 - 2026-10-26 — `montage view`: read-only refine page, frames by the renderer, live-follows mcp edits (checked in Chrome on JWST copy; page frame bug fixed); all PRD code built; 485/1 → [[2026-10-26-montage-view]]
 - 2026-10-26 — `scrape --suggest-queries`: Claude archive queries pre-scrape (FR-2 rebuilt: no script exists at sourcing time); brief query wins; 467/1 → [[2026-10-26-suggested-asset-queries]]
