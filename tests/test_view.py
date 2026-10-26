@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -96,6 +97,28 @@ def test_frames_are_rendered_once_and_cached_by_content(server, ws, monkeypatch)
     monkeypatch.setattr(fc, "grab", lambda *a, **k: pytest.fail("a cached frame is not grabbed again"))
     assert _req(server, "GET", "/api/frame?n=20")[0].status == 200
     assert (ws / "scene_plan.json").read_bytes() == before            # read-only
+
+
+@needs_ffmpeg
+def test_a_failed_grab_leaves_no_half_written_frame(server, ws, monkeypatch):
+    # ffmpeg writes the PNG as it goes: the served path must never see it, and a failure must not cache it
+    import montage.frame_context as fc
+    real_run, written = fc.subprocess.run, []
+
+    def dies_halfway(cmd, **kw):
+        if cmd[0] != fc.tool("ffmpeg"):
+            return real_run(cmd, **kw)
+        written.append(Path(cmd[-1]))
+        written[-1].write_bytes(b"\x89PNG\r\n\x1a\n half")
+        return subprocess.CompletedProcess(cmd, 1, "", "killed")
+
+    monkeypatch.setattr(fc.subprocess, "run", dies_halfway)
+    out = ws / "cache" / "view" / server.view.snapshot()["frameKey"] / "f_000021.png"
+    assert _req(server, "GET", "/api/frame?n=21")[0].status == 500
+    assert written and written[0] != out and not out.exists() and not written[0].exists()
+    monkeypatch.undo()
+    res, body = _req(server, "GET", "/api/frame?n=21")
+    assert res.status == 200 and len(body) > 100 and out.read_bytes() == body
 
 
 @pytest.mark.parametrize("q", ["n=-1", "n=99999", "n=x", ""])

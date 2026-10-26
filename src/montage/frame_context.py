@@ -13,6 +13,7 @@ rendered by the same filter chains the renderer uses, so it is what `montage ren
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -147,10 +148,15 @@ def grab(plan: Plan, frame: int, out: Path | None = None, *, normalize: bool = T
     if captions and plan.captions is not None:
         subtitles = subtitles_mod.write_ass(plan.captions, ws / "cache" / "inspect" / "captions.ass",
                                             plan.meta.width, plan.meta.height, plan.meta.fps, lambda f: f)
-    out.unlink(missing_ok=True)
-    r = subprocess.run(grab_command(plan, frame, out, subtitles, max_width), capture_output=True, text=True,
+    # ffmpeg writes as it goes: render beside `out` and swap it in whole, so a reader (or a cache check)
+    # never sees a half-written PNG and a failed grab leaves nothing behind
+    part = out.with_name(out.stem + ".part.png")
+    part.unlink(missing_ok=True)
+    r = subprocess.run(grab_command(plan, frame, part, subtitles, max_width), capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
-    if r.returncode != 0 or not out.is_file():
+    if r.returncode != 0 or not part.is_file():
+        part.unlink(missing_ok=True)
         tail = "\n".join(r.stderr.strip().splitlines()[-15:])
         raise FrameError(f"frame grab failed (ffmpeg exit {r.returncode}):\n{tail}")
+    os.replace(part, out)
     return out
