@@ -229,8 +229,12 @@ def render_command(plan: Plan, out: Path, measured: dict | None, spec: OutputSpe
             "-movflags", "+faststart", str(out)]
 
 
-def _run(cmd: list[str], what: str) -> str:
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+def _run(cmd: list[str], what: str, timeout: float | None = None) -> str:
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=timeout)
+    except subprocess.TimeoutExpired as exc:  # run() has killed it
+        raise RenderError(f"{what} timed out after {timeout:g} s") from exc
     if result.returncode != 0:
         tail = "\n".join(result.stderr.strip().splitlines()[-25:])
         raise RenderError(f"{what} failed (ffmpeg exit {result.returncode}):\n{tail}")
@@ -271,6 +275,11 @@ def render(plan: Plan, out: str | Path | None = None, spec: OutputSpec | None = 
     return out
 
 
+def preview_timeout(plan: Plan) -> float:
+    """Seconds before a preview ffmpeg counts as hung: a 480p animatic renders about real time, so 10x."""
+    return max(120, 10 * plan.meta.duration_frames / plan.meta.fps)
+
+
 def default_preview(plan: Plan) -> Path:
     return review.preview_path(plan.workspace)
 
@@ -290,6 +299,6 @@ def preview(plan: Plan, plan_path: str | Path, out: str | Path | None = None,
     if normalize:
         plan = _normalized(plan)
     subtitles = write_subtitles(plan, spec) if captions else None
-    _run(render_command(plan, out, None, spec, subtitles), "preview")
+    _run(render_command(plan, out, None, spec, subtitles), "preview", preview_timeout(plan))
     review.record(out, "preview", fp, plan.workspace)
     return out

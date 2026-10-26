@@ -139,6 +139,31 @@ def test_a_hung_grab_times_out_and_frees_the_next_frame(server, ws, monkeypatch)
     assert res.status == 200 and body[:4] == b"\x89PNG"
 
 
+@needs_ffmpeg
+def test_a_hung_preview_times_out_and_frees_the_frames(server, monkeypatch):
+    # Re-render holds view.job like a frame grab does; a stuck preview ffmpeg stalled every frame after it
+    import montage.render as render_mod
+    monkeypatch.setattr(render_mod, "preview_timeout", lambda plan: 1)
+    monkeypatch.setattr(render_mod, "render_command",
+                        lambda *a, **k: [sys.executable, "-c", "import time; time.sleep(30)"])
+    t0 = time.monotonic()
+    assert server.view.start_preview()
+    while server.view.preview_busy and time.monotonic() - t0 < 15:
+        time.sleep(0.1)
+    assert not server.view.preview_busy and "timed out" in (server.view.preview_error or "")
+    assert time.monotonic() - t0 < 10
+    monkeypatch.undo()
+    res, body = _req(server, "GET", "/api/frame?n=23")
+    assert res.status == 200 and body[:4] == b"\x89PNG"
+
+
+def test_the_preview_timeout_scales_with_the_video():
+    from montage import render as render_mod
+    plan = lambda frames: type("P", (), {"meta": type("M", (), {"duration_frames": frames, "fps": 30})()})()  # noqa: E731
+    assert render_mod.preview_timeout(plan(300)) == 120                 # 10 s video -> the floor
+    assert render_mod.preview_timeout(plan(30 * 600)) == 6000           # 10 min video -> 10x
+
+
 @pytest.mark.parametrize("q", ["n=-1", "n=99999", "n=x", ""])
 def test_bad_frame_numbers(server, q):
     res, body = _req(server, "GET", f"/api/frame?{q}")

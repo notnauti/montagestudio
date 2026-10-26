@@ -150,8 +150,8 @@ def test_preview_made_before_an_edit_mid_render_is_stale(ws, monkeypatch):
     path = _plan(ws)
     real_run = render_mod._run
 
-    def edit_while_rendering(cmd, what):
-        result = real_run(cmd, what)
+    def edit_while_rendering(cmd, what, *rest):
+        result = real_run(cmd, what, *rest)
         raw = json.loads(path.read_text())
         raw["meta"]["title"] = "Edited mid-render"
         path.write_text(json.dumps(raw))
