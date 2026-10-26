@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-26 — `montage view`: read-only refine page, frames by the renderer, live-follows mcp edits (checked in Chrome on JWST copy; page frame bug fixed); all PRD code built; 485/1 → [[2026-10-26-montage-view]]
 - 2026-10-26 — `scrape --suggest-queries`: Claude archive queries pre-scrape (FR-2 rebuilt: no script exists at sourcing time); brief query wins; 467/1 → [[2026-10-26-suggested-asset-queries]]
 - 2026-10-26 — publish-pack: thumbnail candidates clear of every transition (live on JWST copy), opt-in `--draft` Claude text, one model constant; 450/1 → [[2026-10-26-publish-pack-thumbnails-draft]]
 - 2026-10-26 — production measurement built (command log, hand-edit counts, summary, `montage stats`, ledger in logs/); stray-log bug fixed; 424/1 → [[2026-10-26-production-measurement]]

@@ -34,7 +34,7 @@ from .edit import HISTORY_DIR
 LOG = "production_log.jsonl"
 SUMMARY = ("publish", "production_summary.json")
 LEDGER = ("logs", "production-ledger.jsonl")
-UNTIMED = ("mcp", "stats")   # logged and listed, but not in wallSecondsTotal
+UNTIMED = ("mcp", "view", "stats")   # logged and listed, but not in wallSecondsTotal
 
 
 def _now() -> str:
@@ -118,7 +118,7 @@ def timings(log: list[dict]) -> dict:
     return {
         "commandRuns": dict(Counter(e["cmd"] for e in log)),
         "wallSeconds": {k: round(v, 1) for k, v in sorted(wall.items())},
-        # mcp is a server left open for a whole editing session, stats runs after publishing: neither is work
+        # mcp / view are servers left open for a whole editing session, stats runs after publishing: not work
         "wallSecondsTotal": round(sum(v for k, v in wall.items() if k not in UNTIMED), 1),
         "firstCommandAt": starts[0] if starts else None,
         "lastCommandAt": starts[-1] if starts else None,

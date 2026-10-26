@@ -1,4 +1,4 @@
-"""`montage init|scrape|plan|approve-script|contact-sheet|preview|approve|validate|normalize|render|publish-pack|stats|mcp`.
+"""`montage init|scrape|plan|approve-script|contact-sheet|preview|approve|validate|normalize|render|publish-pack|stats|view|mcp`.
 
 Every command run on a workspace is appended to <workspace>/production_log.jsonl (production.py).
 
@@ -723,6 +723,11 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--views", type=int, help="views at --day")
     st.add_argument("--avg-view-seconds", type=float, metavar="S", help="average view duration at --day")
 
+    vw = sub.add_parser("view", help="local read-only page over scene_plan.json: timeline, rendered frames, "
+                                      "preview, gates; follows edits made over montage mcp")
+    vw.add_argument("workspace", help="workspace dir (uses its scene_plan.json) or a scene_plan.json")
+    vw.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: a free one)")
+
     m = sub.add_parser("mcp", help="MCP server on stdio: timeline edit tools over the workspace's "
                                    "scene_plan.json (every write re-validated)")
     m.add_argument("workspace", help="workspace dir (uses its scene_plan.json) or a scene_plan.json")
@@ -741,7 +746,7 @@ def _command_workspace(args) -> Path | None:
         if args.topic is not None:
             return Path(args.workspace) if args.workspace else Path("workspace") / slug(args.topic)
         return Path(args.brief).parent if args.brief else None
-    if args.cmd in ("contact-sheet", "preview", "mcp"):
+    if args.cmd in ("contact-sheet", "preview", "mcp", "view"):
         return _workspace_plan(args.workspace).parent
     if args.cmd in ("validate", "normalize", "render"):
         return Path(args.plan).parent
@@ -772,6 +777,12 @@ def _logged(args, argv: list[str]) -> int:
 
 
 def _dispatch(args) -> int:
+    if args.cmd == "view":
+        from .view import serve
+        plan_path = _workspace_plan(args.workspace)
+        if not plan_path.is_file():
+            return _fail(f"no scene_plan.json at {plan_path}; run montage plan first")
+        return serve(plan_path.parent, args.port)
     if args.cmd == "stats":
         return stats_command(args)
     if args.cmd == "mcp":
