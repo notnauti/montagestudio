@@ -16,6 +16,8 @@ Hand edits come from existing records only:
 - picks: manifest entries with `pickedRank` (a candidate chosen over scrape's first)
 - planEdits: snapshots in cache/plan-history/ (one per accepted MCP edit)
 - handManifestEntries: manifest entries scrape did not write (no `ranking` field)
+- handQueries: assets sourced with a `query` written into brief.json (`queryFrom: brief`; entries
+  from before 2026-10-26 carry no `queryFrom` and are not counted)
 - forcedRenders / scriptRewrites / storyboardApprovals: from production_log.jsonl
 """
 
@@ -100,6 +102,7 @@ def hand_edits(ws: Path, log: list[dict]) -> dict:
         "picks": sum("pickedRank" in e for e in entries),
         "planEdits": sum(1 for p in hist.iterdir() if p.is_file()) if hist.is_dir() else 0,
         "handManifestEntries": sum("ranking" not in e for e in entries),
+        "handQueries": sum(e.get("queryFrom") == "brief" for e in entries),
         "forcedRenders": sum(e["cmd"] == "render" and "--force" in e.get("argv", []) for e in ok),
         "scriptRewrites": sum(e["cmd"] == "plan" and "--rewrite" in e.get("argv", []) for e in ok),
         "storyboardApprovals": sum(e["cmd"] == "approve" for e in ok),
@@ -201,7 +204,7 @@ def describe(summary: dict) -> list[str]:
            else "no production log (made before logging)"),
         f"hand edits: script {'edited' if h['scriptEdited'] else 'as drafted' if h['scriptEdited'] is False else 'n/a'}"
         f" (writer {h['scriptWriter'] or '?'}); picks {h['picks']}; plan edits {h['planEdits']}; "
-        f"hand manifest entries {h['handManifestEntries']}; forced renders {h['forcedRenders']}; "
+        f"hand manifest entries {h['handManifestEntries']}; hand queries {h.get('handQueries', 0)}; forced renders {h['forcedRenders']}; "
         f"rewrites {h['scriptRewrites']}; storyboard approvals {h['storyboardApprovals']}",
     ]
     if summary.get("url"):

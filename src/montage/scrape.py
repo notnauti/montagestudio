@@ -4,7 +4,7 @@ A brief asset whose `src` file does not exist yet is *wanted*. Its `src` says wh
 the extension picks the kind (.png/.jpg/.jpeg/.webp = image, .mp4/.mov/.mkv/.webm/.m4v =
 video) and the file lands exactly there, so brief.json, script.json and the plan never need
 rewriting. Search words come from the asset's optional `query` (sent whole, as written, minus
-stopwords), else its `description` minus stopwords and minus the words every asset in the brief
+stopwords), else a saved `--suggest-queries` suggestion (queries.py), else its `description` minus stopwords and minus the words every asset in the brief
 shares (the topic, which tells no asset apart), capped at QUERY_TERMS. Ranking also weighs the
 narration of any script.json beat that already uses the asset.
 
@@ -60,6 +60,7 @@ class Wanted:
     beat_text: str
     shared: frozenset[str] = frozenset()  # stems every asset in the brief uses (the topic)
     unique: frozenset[str] = frozenset()  # stems no other asset in the brief uses
+    query_from: str = "description"       # "brief" (hand-written), "suggested" (queries.py) or "description"
 
     def search_words(self) -> list[str]:
         """Original spellings, never stems. An explicit query goes whole; a description drops the
@@ -174,7 +175,8 @@ def wanted_assets(workspace: Path) -> tuple[list[Wanted], list[str]]:
                              if isinstance(b, dict) and b.get("asset") == src)
         others = set().union(*(t for j, t in own.items() if j != i))
         wanted.append(Wanted(src, p, kind, desc.strip(), query.strip() if query else None, beat_text,
-                             shared, frozenset(own.get(i, set()) - others)))
+                             shared, frozenset(own.get(i, set()) - others),
+                             "brief" if query else "description"))
     music = raw.get("music")
     if isinstance(music, dict) and isinstance(music.get("src"), str) \
             and not (workspace / music["src"]).is_file():
@@ -316,7 +318,7 @@ def fetch(out: Outcome, http: Http, sources: list, workspace: Path, max_bytes: i
                 "source": c.source, "sourceId": c.id, "title": c.title, "pageUrl": c.page_url,
                 "downloadUrl": url, "license": c.license.name, "licenseUrl": c.license.url,
                 "licenseBasis": c.license.basis, "attribution": c.attribution,
-                "query": out.queries.get(c.source, ""), "score": scored.score,
+                "query": out.queries.get(c.source, ""), "queryFrom": out.wanted.query_from, "score": scored.score,
                 "matchedTerms": [w.surface(t) for t in scored.matched], "ranking": RANKING,
                 "bytes": w.path.stat().st_size, "downloadedBytes": size, "sha256": _sha256(w.path),
                 "convertedFrom": converted,
@@ -355,6 +357,8 @@ def scrape(workspace: str | Path, *, http: Http | None = None, source_names=DEFA
     if not (ws / "brief.json").is_file():
         raise ScrapeError(f"no brief.json in {ws}; run `montage init \"{ws}\"` and list the visuals you want")
     wanted, notes = wanted_assets(ws)
+    from . import queries as queries_mod
+    wanted = queries_mod.apply(wanted, queries_mod.load(ws))  # the brief's own query still wins
     http = http or Http()
     sources = make_sources(source_names)
     outcomes = []

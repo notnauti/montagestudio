@@ -157,9 +157,9 @@ def pick_command(args) -> int:
     """`scrape <ws> --pick <asset>=<n>`: download a candidate from cache/candidates.json."""
     from . import net
     from .candidates import PickError, parse_pick, pick
-    if args.dry_run or args.vision:
+    if args.dry_run or args.vision or args.suggest_queries:
         return _fail("--pick downloads a candidate the last scrape kept; it does not search, "
-                     "so it takes no --dry-run or --vision")
+                     "so it takes no --dry-run, --vision or --suggest-queries")
     ws = Path(args.workspace)
     if not ws.is_dir():
         return _fail(f"no workspace at {ws}")
@@ -207,12 +207,30 @@ def scrape_command(args) -> int:
     if unknown or not names:
         return _fail(f"--sources: unknown {unknown or 'empty list'}; choose from {sorted(SOURCES)}")
     scorer = None
-    if args.vision:
+    if args.vision or args.suggest_queries:
         from . import vision
         reason = vision.unavailable_reason()
         if reason:
-            return _fail(f"--vision needs Claude: {reason}", 2)
+            flag = "--vision" if args.vision else "--suggest-queries"
+            return _fail(f"{flag} needs Claude: {reason}", 2)
+    if args.vision:
         scorer = vision.ClaudeVision()
+    query_failed = None
+    if args.suggest_queries:
+        from . import queries
+        try:
+            got, query_failed = queries.suggest(Path(args.workspace).resolve(), queries.ClaudeQueries())
+        except BriefError as exc:
+            _print_errors("brief", exc.errors)
+            return 1
+        if query_failed:
+            print(f"suggest-queries failed ({query_failed}); searching from the descriptions", file=sys.stderr)
+        elif got:
+            print(f"suggested queries ({len(got)}), saved to cache/queries.json:")
+            for src, q in got.items():
+                print(f"  {src}: {q}")
+        else:
+            print("suggest-queries: every wanted visual already has a query in brief.json")
     try:
         outcomes, notes, manifest = scrape(args.workspace, http=Http(), source_names=names, max_mb=args.max_mb,
                                            min_score=args.min_score, dry_run=args.dry_run,
@@ -235,7 +253,9 @@ def scrape_command(args) -> int:
     vision_failed = next((o.vision_error for o in outcomes if o.vision_error), None)
     for o in outcomes:
         w = o.wanted
-        print(f"\n  {w.src} [{w.kind}] search words: {' '.join(w.search_words())}")
+        origin = {"brief": "query from brief.json", "suggested": "suggested query, cache/queries.json"}
+        print(f"\n  {w.src} [{w.kind}] search words: {' '.join(w.search_words())}"
+              f"  ({origin.get(w.query_from, 'from the description')})")
         for src_name, q in o.queries.items():
             print(f"    {src_name}: {q}")
         for err in o.errors:
@@ -275,17 +295,17 @@ def scrape_command(args) -> int:
         print(f"  note: {note}")
     if args.dry_run:
         print("\ndry run: no assets downloaded" + ("" if args.no_candidates else " (candidate previews only)"))
-        return 2 if vision_failed else 0
+        return 2 if vision_failed or query_failed else 0
     if manifest:
         print(f"\nmanifest: {manifest}")
     if missing:
         print(f"{missing} visual(s) still missing; montage plan needs every file", file=sys.stderr)
-        return 2 if net_failed or vision_failed else 1
+        return 2 if net_failed or vision_failed or query_failed else 1
     print(f"next: montage plan \"{Path(args.workspace) / 'brief.json'}\"")
     if vision_failed:
         print(f"vision re-ranking failed ({vision_failed}); assets were chosen lexically", file=sys.stderr)
         return 2
-    return 0
+    return 2 if query_failed else 0
 
 
 def _workspace_plan(target: str) -> Path:
@@ -638,6 +658,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--pick", action="append", metavar="ASSET=N",
                    help="download candidate N (1-3, from the last scrape's candidates sheet) for ASSET "
                         "(asset id, file name or src) and record it in manifest.json; repeatable")
+    s.add_argument("--suggest-queries", action="store_true",
+                   help="have Claude write an archive search query for every wanted visual without a "
+                        "brief.json query (saved to cache/queries.json and reused; needs Claude credentials)")
     s.add_argument("--vision", action="store_true",
                    help="re-rank the top candidates with Claude vision from their previews "
                         "(needs Claude credentials; exit 2 without them)")

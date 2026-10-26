@@ -82,7 +82,7 @@ def test_hand_edits_come_from_the_existing_records(tmp_path):
     _write(tmp_path / "script_approval.json", {"draftSha256": "a", "approvedSha256": "b", "writer": "claude-x"})
     _write(tmp_path / "manifest.json", {"version": 1, "assets": {
         "./assets/a.jpg": {"ranking": "lexical", "pickedRank": 2},
-        "./assets/b.jpg": {"ranking": "lexical"},
+        "./assets/b.jpg": {"ranking": "lexical", "queryFrom": "brief"},
         "./assets/c.jpg": {"source": "hand"}}})
     hist = tmp_path / "cache" / "plan-history"
     hist.mkdir(parents=True)
@@ -94,7 +94,7 @@ def test_hand_edits_come_from_the_existing_records(tmp_path):
            {"cmd": "approve", "argv": [], "exit": 0}, {"cmd": "approve", "argv": [], "exit": 0}]
     assert production.hand_edits(tmp_path, log) == {
         "scriptWriter": "claude-x", "scriptEdited": True, "picks": 1, "planEdits": 3,
-        "handManifestEntries": 1, "forcedRenders": 1, "scriptRewrites": 1, "storyboardApprovals": 2}
+        "handManifestEntries": 1, "handQueries": 1, "forcedRenders": 1, "scriptRewrites": 1, "storyboardApprovals": 2}
 
 
 def test_script_edit_status(tmp_path):

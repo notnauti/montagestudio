@@ -144,6 +144,7 @@ def _candidate_json(rank: int, s: Scored, out: Outcome, workspace: Path) -> dict
         "preview": c.preview, "previewFile": prev.relative_to(workspace).as_posix() if prev else None,
         "extra": c.extra, "score": s.score, "matchedTerms": [out.wanted.surface(t) for t in s.matched],
         "distinctive": s.distinctive, "penalties": list(s.penalties), "query": out.queries.get(c.source, ""),
+        "queryFrom": out.wanted.query_from,
         "vision": {"score": vis[0], "reason": vis[1]} if vis else None,
     }
 
@@ -339,7 +340,8 @@ def pick(workspace: str | Path, key: str, n: int, *, http: Http | None = None,
     staging = ws / "cache" / "pick" / target.name
     staging.parent.mkdir(parents=True, exist_ok=True)
     staging.unlink(missing_ok=True)
-    w = Wanted(src, staging, kind, entry.get("description", ""), None, "")
+    w = Wanted(src, staging, kind, entry.get("description", ""), None, "",
+               query_from=cands[n - 1].get("queryFrom", "description"))
     out = Outcome(w, ranked=[scored], queries={scored.candidate.source: cands[n - 1].get("query", "")})
     fetch(out, http or Http(), make_sources([scored.candidate.source]), ws, int(max_mb * 1_000_000), probe=probe)
     notes = []
