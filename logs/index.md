@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-26 — VIDEO 2 PUBLISHED: Voyager Golden Record (youtu.be/VzhprVJvmM8), thumb_2 gold cover, chapter 2 title fixed, URL in ledger; 1 of 4 under cadence test, 20 min hands-on → [[2026-10-26-voyager-published]]
 - 2026-10-26 — video 2 (Voyager): Claude rewrote script to 87 s → approved → preview → 1080p render QC 7/7 (1m54s for 92 s) → publish-pack, 20 min hands-on; disclosure/description/tags hand-fixed; awaiting n@uti watch + upload → [[2026-10-26-voyager-render-publish-pack]]
 - 2026-10-26 — video 2 (Voyager Golden Record) first live run: scrape 8/8 + 2 picks, Claude 400 (no credit), Ollama draft stopped at script gate (54 s vs 90, 6 beats on one still); Commons TIF downscale + upload.wikimedia 429 bugs logged → [[2026-10-26-voyager-run-to-script-gate]]
 - 2026-10-26 — `montage view`: ffmpeg timeouts on frame grabs (120 s) and the preview render (max(120 s, 10× length)), so a hung ffmpeg can't hold the frame lock; 494/1 → [[2026-10-26-view-ffmpeg-timeouts]]
