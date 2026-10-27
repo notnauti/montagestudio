@@ -3,5 +3,9 @@
 voices/
 *.egg-info/
 
+# Credentials: the montage CLI reads ANTHROPIC_API_KEY from .env. Ignored here too, so a standalone clone is covered.
+.env
+.env.local
+
 # Per-video workspaces: scraped media, narration, renders. Provenance lives in each manifest.json.
 workspace/
