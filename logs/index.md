@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-26 — pushed to private GitHub notnauti/montagestudio via subtree split (39 commits, secrets scan clean); `.env` ignored in project .gitignore; README added; manual sync decision → [[2026-10-26-github-repo-readme]]
 - 2026-10-26 — workflow artifact v4: refine stage now "dry run on a copy" with results + next steps (MCP host, licence check, required-or-optional) → [[2026-10-26-workflow-page-refine-stage]]
 - 2026-10-26 — refine dry run on a Voyager copy: 2 `mcp` b-roll swaps + frame inspects, watched in `view`, re-preview QC 5/5; no MCP host configured, `asset_replace_broll` skips licence gate; Voyager "1 of 4" now ambiguous (refine skipped); workflow artifact v3 → [[2026-10-26-refine-dry-run-voyager-copy]]
 - 2026-10-26 — VIDEO 2 PUBLISHED: Voyager Golden Record (youtu.be/VzhprVJvmM8), thumb_2 gold cover, chapter 2 title fixed, URL in ledger; 1 of 4 under cadence test, 20 min hands-on → [[2026-10-26-voyager-published]]
