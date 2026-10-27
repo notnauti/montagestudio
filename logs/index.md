@@ -3,6 +3,7 @@
 One line per session, newest first. `/save` appends here; `/resume` reads this file rather than the individual logs, which is what keeps session startup cheap as history grows.
 
 <!-- Format: - YYYY-MM-DD — what happened → [[YYYY-MM-DD-slug]] -->
+- 2026-10-26 — video 2 (Voyager Golden Record) first live run: scrape 8/8 + 2 picks, Claude 400 (no credit), Ollama draft stopped at script gate (54 s vs 90, 6 beats on one still); Commons TIF downscale + upload.wikimedia 429 bugs logged → [[2026-10-26-voyager-run-to-script-gate]]
 - 2026-10-26 — `montage view`: ffmpeg timeouts on frame grabs (120 s) and the preview render (max(120 s, 10× length)), so a hung ffmpeg can't hold the frame lock; 494/1 → [[2026-10-26-view-ffmpeg-timeouts]]
 - 2026-10-26 — `montage view`: frame-load browser regression test committed; half-written/failed frame PNG fix (atomic `grab`); 491/1 → [[2026-10-26-view-frame-bugs]]
 - 2026-10-26 — `montage view`: read-only refine page, frames by the renderer, live-follows mcp edits (checked in Chrome on JWST copy; page frame bug fixed); all PRD code built; 485/1 → [[2026-10-26-montage-view]]
