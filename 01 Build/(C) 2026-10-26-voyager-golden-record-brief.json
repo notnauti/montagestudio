@@ -1,0 +1,48 @@
+{
+  "title": "The Voyager Golden Record",
+  "brief": "A short documentary for an educational audience about the Voyager Golden Record: the 1977 launches of Voyager 1 and 2, the committee chaired by Carl Sagan that chose what to put on a gold-plated copper phonograph record, what is on it (greetings in 55 languages, sounds of Earth, music from around the world, 116 images), the diagram on its cover that tells a finder how to play it and where it came from, and why a message that may never be found still matters as Voyager 1 travels through interstellar space.",
+  "targetSeconds": 90,
+  "recipe": "documentary",
+  "assets": [
+    {
+      "src": "./assets/voyager-record-cover.jpg",
+      "description": "Voyager Golden Record cover, gold disc with engraved playing instructions and pulsar map",
+      "query": "voyager golden record cover"
+    },
+    {
+      "src": "./assets/voyager-record-disc.jpg",
+      "description": "Voyager Golden Record disc, the gold-plated copper phonograph record itself",
+      "query": "voyager golden record"
+    },
+    {
+      "src": "./assets/voyager-record-mounted.jpg",
+      "description": "Voyager Golden Record mounted on the side of the Voyager spacecraft before launch",
+      "query": "golden record attached voyager spacecraft"
+    },
+    {
+      "src": "./assets/voyager-titan-launch.jpg",
+      "description": "Titan Centaur rocket launching a Voyager spacecraft from Cape Canaveral in 1977",
+      "query": "voyager launch titan centaur 1977"
+    },
+    {
+      "src": "./assets/voyager-spacecraft.jpg",
+      "description": "Voyager spacecraft with its large white high-gain antenna dish",
+      "query": "voyager spacecraft"
+    },
+    {
+      "src": "./assets/voyager-jupiter.jpg",
+      "description": "Jupiter photographed by Voyager, bands of cloud and the Great Red Spot",
+      "query": "voyager jupiter great red spot"
+    },
+    {
+      "src": "./assets/voyager-pale-blue-dot.jpg",
+      "description": "Pale Blue Dot, Earth as a tiny point of light photographed by Voyager 1 in 1990",
+      "query": "pale blue dot voyager"
+    },
+    {
+      "src": "./assets/voyager-interstellar.jpg",
+      "description": "Voyager spacecraft leaving the solar system into interstellar space, illustration",
+      "query": "voyager interstellar space"
+    }
+  ]
+}
